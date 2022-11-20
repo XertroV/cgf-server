@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "cgf-server"
+version = "0.1.0"
+description = "Simple game server for Trackmania Plugins"
+authors = ["Max Kaye <m@xk.io>"]
+license = "Public Domain"
+readme = "README.md"
+packages = [{include = "cgf_server"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+toml = "^0.10.2"
+sqlalchemy = "^1.4.44"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

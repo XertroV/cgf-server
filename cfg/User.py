@@ -1,14 +1,18 @@
-from dataclasses import dataclass, field
+# from dataclasses import field
 import time
 
+from pydantic import BaseModel, Field
+from pydantic.dataclasses import dataclass
+
+from beanie import Document, Indexed, init_beanie
 
 
-@dataclass
-class User:
-    id: str
+# @dataclass
+class User(Document):
+    uid: Indexed(str, unique=True)
     name: str
     secret: str
-    registration_ts: int = field(default_factory=lambda: int(time.time()))
+    registration_ts: int = Field(default_factory=lambda: int(time.time()))
     n_logins: int = 0
     last_seen: float = 0
 
@@ -17,7 +21,7 @@ class User:
 
     @property
     def json(self):
-        return dict(id=self.id, username=self.name)
+        return dict(uid=self.uid, username=self.name)
 
     @property
     def unsafe_json(self):

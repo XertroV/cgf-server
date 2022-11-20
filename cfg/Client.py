@@ -1,10 +1,11 @@
 import asyncio
-from dataclasses import dataclass
 import json
 from logging import debug, warn, warning
 import os
 import struct
 import traceback
+
+from pydantic.dataclasses import dataclass
 
 from cfg.users import *
 
@@ -89,7 +90,7 @@ class Client:
                 return None
             if incoming == "PING": # skip pings
                 if self.user is not None:
-                    info(f"Got ping from user: {self.user.name} / {self.user.id}")
+                    info(f"Got ping from user: {self.user.name} / {self.user.uid}")
                 return await self.read_msg()
             return incoming
         except Exception as e:
@@ -143,12 +144,13 @@ class Client:
         user = None
         checked_for_user = False
         if msg.type == "LOGIN":
-            user = authenticate_user(msg['id'], msg['username'], msg['secret'])
+            user = authenticate_user(msg['uid'], msg['username'], msg['secret'])
             checked_for_user = True
             if user is not None:
+                await user.set({User.last_seen: time.time(), User.n_logins: user.n_logins + 1})
                 self.write_json(dict(type="LOGGED_IN"))
         if msg.type == "REGISTER":
-            user = register_user(msg['username'], msg['wsid'])
+            user = await register_user(msg['username'], msg['wsid'])
             checked_for_user = True
             if user is not None:
                 self.write_json(dict(type="REGISTERED", payload=user.unsafe_json))

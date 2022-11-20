@@ -2,15 +2,20 @@ import asyncio
 
 import logging as log
 import os
-import sys
+from pathlib import Path
 import traceback
 
 from cfg import Client, User
-from cfg.Client import get_lobby
-import toml
-
+from cfg.Client import Lobby, Room, get_lobby
 from cfg.consts import SERVER_VERSION
+from cfg.db import db
 log.basicConfig(level=log.DEBUG)
+
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel
+
+from beanie import Document, Indexed, init_beanie
+
 
 HOST_NAME = os.environ.get("CGF_HOST_NAME", "0.0.0.0")
 TCP_PORT = int(os.environ.get("CGF_PORT", "15277"))
@@ -20,6 +25,10 @@ loop = asyncio.new_event_loop()
 clients: set[Client] = set()
 
 async def main():
+    await init_beanie(database=db.db_name, document_models=[
+        User,
+        # Lobby, Room
+    ])
     server_coro = await asyncio.start_server(connection_cb, HOST_NAME, TCP_PORT)
     log.info(f"[version: {SERVER_VERSION}] Starting server: {HOST_NAME}:{TCP_PORT}")
     async with server_coro:

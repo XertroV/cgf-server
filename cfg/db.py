@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
+from motor.motor_asyncio import AsyncIOMotorClient
 
-if "PROM_DSN" not in os.environ:
-    os.environ["PROM_DSN"] = "sqlite://test.db"
+db = AsyncIOMotorClient(Path('.mongodb').read_text().strip())

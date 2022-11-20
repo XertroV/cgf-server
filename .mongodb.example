@@ -1,0 +1,1 @@
+mongodb+srv://<user>:<password>@<domain>/?retryWrites=true&w=majority

@@ -9,58 +9,37 @@ from cfg.User import User
 
 all_users: dict[str, User] = dict()
 
-# class ClientSecrets:
-#     user_to_secret: dict[str, str]
-#     secret_to_user: dict[str, User]
 
-#     def __init__(self):
-#         self.user_to_secret = dict()
-#         self.secret_to_user = dict()
-
-#     def add(self, user: User):
-#         self.user_to_secret[user.id] = user.secret
-#         self.secret_to_user[user.secret] = user
-
-#     def get_secret(self, user: User):
-#         if user.id not in self.user_to_secret:
-#             s = gen_secret()
-#             self.user_to_secret[user.id] = s
-#             self.secret_to_user[s] = user
-#         return self.user_to_secret[user.id]
+def get_user(uid: str) -> User:
+    return all_users.get(uid, None)
 
 
-# client_secrets = ClientSecrets()
-
-
-def get_user(id: str) -> User:
-    return all_users.get(id, None)
-
-
-def register_user(name: str, wsid: str) -> User:
-    id = gen_user_id(name, wsid)
-    u = User(id, name, gen_secret())
-    all_users[u.id] = u
+async def register_user(name: str, wsid: str) -> User:
+    uid = gen_user_uid(name, wsid)
+    u = User(uid=uid, name=name, secret=gen_secret())
+    await u.save()
+    all_users[u.uid] = u
     # client_secrets.add(u)
     return u
 
 
-def authenticate_user(id: str, username: str, secret: str) -> User:
-    if (id not in all_users):
-        info(f"Attempted login ({username}); ID not found: {id}")
+def authenticate_user(uid: str, username: str, secret: str) -> User:
+    if (uid not in all_users):
+        info(f"Attempted login ({username}); UID not found: {uid}")
         return None
-    u = all_users[id]
-    if u.name != username or u.id != id or u.secret != secret:
+    u = all_users[uid]
+    if u.name != username or u.uid != uid or u.secret != secret:
         info(f"Attempted login ({username}); secret mismatch!!")
         return None
     u.n_logins += 1
-    info(f"Authenticated user: {u.name} / id:{u.id}")
+    info(f"Authenticated user: {u.name} / uid:{u.uid}")
     return u
 
 
 def gen_secret() -> str:
     return os.urandom(20).hex()
 
-def gen_user_id(name: str, wsid: str) -> str:
+def gen_user_uid(name: str, wsid: str) -> str:
     return sha_256("|".join([name, str(time.time()), wsid]))[:20]
 
 def sha_256(text: str) -> str:

@@ -11,6 +11,7 @@ packages = [{include = "cgf_server"}]
 python = "^3.10"
 toml = "^0.10.2"
 sqlalchemy = "^1.4.44"
+beanie = "^1.15.4"
 
 
 [build-system]

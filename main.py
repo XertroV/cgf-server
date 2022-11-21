@@ -7,8 +7,8 @@ import time
 import traceback
 import signal
 
-from cfg import User
 from cfg.Client import Client, ChatMessages, Lobby, LobbyModel, Message, Room, GameInstance, get_main_lobby, all_clients, populate_all_lobbies, all_lobbies, all_users
+from cfg.User import User
 from cfg.consts import SERVER_VERSION
 from cfg.users import all_users
 from cfg.db import db

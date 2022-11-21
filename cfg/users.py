@@ -42,5 +42,8 @@ def gen_secret() -> str:
 def gen_user_uid(name: str, wsid: str) -> str:
     return sha_256("|".join([name, str(time.time()), wsid]))[:20]
 
+def gen_uid() -> str:
+    return os.urandom(10).hex()
+
 def sha_256(text: str) -> str:
     return hashlib.sha256(text.encode("UTF8")).hexdigest()

@@ -36,3 +36,42 @@ options:
 - join room
 - create room
   - provides join code
+
+
+
+done:
+
+- user registration
+- mongodb backing infra
+
+todo:
+
+- handoff flow:
+  - lobby -> game lobby
+  - game lobby -> room
+  - room -> game(s)
+  - game -> map(s)
+  - (and inverse on completion)
+
+
+- server functions:
+  - role die/dice
+  - find random maps within params
+
+
+- basic game: tic tac toe
+  - take turns placing X or O
+  - first move & middle decided by first race; first to finish or get selected medal
+  - then other player goes, alternating
+  - each round player can
+    - place in blank square for free
+    - fight for a prior square, re-race that map, winner takes it
+      - possible handicap for challenging player?
+  - first to 3 in a row wins
+
+
+
+
+- future features
+  - stream position data (not recorded in DB)
+  - game results -> ranking for players of that game (ELO?)

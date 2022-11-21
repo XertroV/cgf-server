@@ -15,10 +15,12 @@
 |--- |--- |--- |--- |--- |
 | init | REGISTER | `{username: string, wsid: string}` | none ||
 | init | LOGIN | `account` | none ||
-| `0|MainLobby` | CREATE_LOBBY | `{content: string}` | none | used by developers to create a game lobby. note: lobbies that are not whitelisted may be deleted after 1hr. |
-| `0|MainLobby` | JOIN_LOBBY | `{content: string}` | none | join a game lobby |
-| `1|<LobbyName>` | CREATE_ROOM | `{content: string}` | none, global | visibility corresponds to private/public room. public rooms are listed and can be joined by anyone. |
-| `1|<LobbyName>` | JOIN_ROOM | `{content: string}` | global ||
+| `0|MainLobby` | CREATE_LOBBY | `{name: string}` | global | used by developers to create a game lobby. note: lobbies that are not whitelisted may be deleted after 1hr. |
+| `0|MainLobby` | JOIN_LOBBY | `{name: string}` | global | join a game lobby |
+| `0|MainLobby` | LIST_LOBBIES | `` | none | request a list of known lobbies |
+| `0|<LobbyName>` | LEAVE_LOBBY | `` | global | leave a game lobby |
+| `1|<LobbyName>` | CREATE_ROOM | `{}` | none, global | visibility corresponds to private/public room. public rooms are listed and can be joined by anyone. |
+| `1|<LobbyName>` | JOIN_ROOM | `{joinCode: string}` | global ||
 
 ## From Server
 
@@ -26,6 +28,8 @@
 |--- |--- |--- |
 | REGISTERED | `account` | |
 | LOGGED_IN | `null` | |
+| LOBBY_LIST | `array<{name: string, nbClients: int, nbRooms: int}>` | |
+| ENTERED_LOBBY | `{name: string, nbClients: int, nbRooms: int}` | |
 
 ## User Broadcast
 

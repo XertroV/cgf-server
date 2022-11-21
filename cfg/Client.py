@@ -4,7 +4,7 @@ from logging import debug, warn, warning
 import os
 import struct
 import traceback
-from typing import Optional
+from typing import Any, Optional
 
 import pymongo
 from pydantic.dataclasses import dataclass
@@ -22,6 +22,10 @@ from .consts import SERVER_VERSION
 class MsgException(Exception):
     pass
 
+
+all_clients: set["Client"] = set()
+# updated in Lobby constructor
+all_lobbies: dict[str, "Lobby"] = dict()
 
 class Message(Document):
     type: Indexed(str)
@@ -43,16 +47,39 @@ class Message(Document):
 class LobbyModel(Document):
     uid: Indexed(str, unique=True) = Field(default_factory=gen_uid)
     name: Indexed(str, unique=True)
-    curr_users: set[Link[User]] = Field(default_factory=set)
-    chat_messages: list[Link[Message]] = Field(default_factory=list)
     recent_chat_msgs: list[Link[Message]] = Field(default_factory=list)
     admins: list[Link[User]] = Field(default_factory=list)
     moderators: list[Link[User]] = Field(default_factory=list)
-    parent_lobby: Optional[Link["LobbyModel"]] = None
+    parent_lobby: Optional[str] = None
     is_public: bool = True
+    creation_ts: float = Field(default_factory=time.time)
 
     class Settings:
         use_state_management = True
+        name = "Lobby"
+
+
+
+# class GameLobby(Lobby):
+#     pass
+
+
+class Room(Document):
+    name: Indexed(str)
+    lobby: Indexed(str)
+    chat: Link["ChatMessages"]
+    admin: Link[User]
+    mods: list[Link[User]]
+    is_public: bool
+    join_code: str = Field(default_factory=gen_join_code)
+
+    async def handoff(self, client: "Client"):
+        pass
+
+
+class GameInstance(Document):
+    async def handoff(self, client: "Client"):
+        pass
 
 
 
@@ -136,7 +163,7 @@ class Client:
         await msg.insert()
         return msg
 
-    def write_msg(self, msg: str):
+    def write_raw(self, msg: str):
         if (len(msg) >= 2**16):
             raise MsgException(f"msg too long ({len(msg)})")
         debug(f"Write message ({len(msg)}): {msg}")
@@ -144,7 +171,10 @@ class Client:
         self.writer.writelines([bytes(msg, "UTF8")])
 
     def write_json(self, data: dict):
-        return self.write_msg(json.dumps(data))
+        return self.write_raw(json.dumps(data))
+
+    def write_message(self, type: str, payload: Any, **kwargs):
+        return self.write_json(dict(type=type, payload=payload, **kwargs))
 
     def set_scope(self, scope: str):
         self.write_json({"scope": scope})
@@ -220,7 +250,7 @@ class Client:
     def disconnect(self):
         if self.disconnected: return
         try:
-            self.write_msg("END")
+            self.write_raw("END")
         except:
             pass
         transport: asyncio.Transport = self.reader._transport
@@ -232,20 +262,25 @@ class Client:
 
 
 
-all_clients: set[Client] = set()
-all_lobbies: dict[str, "Lobby"] = dict()
-
 class Lobby:
     clients: set[Client]
+    rooms: dict[str, Room]
     model: LobbyModel
+    chats: "ChatMessages"
 
     def __init__(self, model: LobbyModel) -> None:
         self.clients = set()
+        self.rooms = dict()
         self.model = model
         if (model.name in all_lobbies):
             raise Exception("Lobby created more than once but exists in dict already")
         all_lobbies[model.name] = self
-        # self.recent_chat_msgs = list()
+        self.loaded_chat = False
+        self.loaded_rooms = False
+        self.chats = None
+        asyncio.create_task(self.load_chat_msgs())
+        asyncio.create_task(self.load_rooms())
+
 
     @property
     def name(self):
@@ -254,14 +289,6 @@ class Lobby:
     @property
     def uid(self):
         return self.model.uid
-
-    @property
-    def curr_users(self):
-        return self.model.curr_users
-
-    @property
-    def chat_messages(self):
-        return self.model.chat_messages
 
     @property
     def recent_chat_msgs(self):
@@ -283,6 +310,32 @@ class Lobby:
     def is_public(self):
         return self.model.is_public
 
+    async def initialized(self):
+        while not self.loaded_chat or not self.loaded_rooms:
+            await asyncio.sleep(0.05)
+
+    async def load_chat_msgs(self):
+        for recent_msg in self.recent_chat_msgs:
+            await recent_msg.fetch_all_links()
+        if self.chats is not None: return
+        self.chats = await ChatMessages.find_one({'lobby': self.name})
+        if self.chats is None:
+            self.chats = ChatMessages(lobby=self.name, msgs=list())
+            asyncio.create_task(self.chats.save())
+        self.loaded_chat = True
+
+    async def load_rooms(self):
+        rooms = Room.find_many({}, fetch_links=True)
+        async for room in rooms:
+            self.rooms[room.name] = room
+        self.loaded_rooms = True
+
+    @property
+    def json_info(self):
+        return {'name': self.name, 'nbClients': len(self.clients), 'nbRooms': len(self.rooms), 'rooms': [r.name if r.is_public else "PRIVATE" for r in self.rooms.values()]}
+
+    # HANDOFF
+
     async def handoff(self, client: Client):
         if client in self.clients:
             warn(f"I already have client: {client}")
@@ -290,14 +343,18 @@ class Lobby:
             return
         self.on_client_entered(client)
         all_clients.add(client)
-        client.set_scope(f"{0 if self.parent_lobby is None else 1}|{self.name}")
+        await self.initialized()
+        self.tell_client_curr_scope(client)
         info(f"Running client: {client.client_ip}")
         try:
             await self.run_client(client)
         except Exception as e:
-            warning(f"[{client.client_ip}] Disconnecting: Exception during run_client: {e}")
+            warning(f"[{client.client_ip}] Disconnecting: Exception during run_client: {e}\n{''.join(traceback.format_exception(e))}")
             client.disconnect()
         self.on_client_handed_off(client)
+
+    def tell_client_curr_scope(self, client: Client):
+        client.set_scope(f"{0 if self.parent_lobby is None else 1}|{self.name}")
 
     def on_client_handed_off(self, client: Client):
         if client in self.clients:
@@ -305,6 +362,9 @@ class Lobby:
 
     def on_client_entered(self, client: Client):
         self.clients.add(client)
+        self.tell_client_curr_scope(client)
+        client.tell_info(f"Entered Lobby: {self.name}")
+        client.write_message("ENTERED_LOBBY", self.json_info)
 
     async def handoff_to_game_lobby(self, client: Client, dest: "Lobby"):
         if self.model.parent_lobby is None:
@@ -312,7 +372,7 @@ class Lobby:
             await dest.handoff(client)
             self.on_client_entered(client)
         else:
-            raise Exception("Can only hand off to game lobby from the main lobby")
+            client.tell_warning("Can only hand off to game lobby from the main lobby")
 
     async def handoff_to_room(self, client: Client, room: "Room"):
         if self.model.parent_lobby is not None:
@@ -320,7 +380,7 @@ class Lobby:
             await room.handoff(client)
             self.on_client_entered(client)
         else:
-            raise Exception("Can only hand off to room from a game lobby")
+            client.tell_warning("Can only hand off to room from a game lobby")
 
     def on_client_left(self, client: Client):
         client.disconnect()
@@ -336,7 +396,8 @@ class Lobby:
             if msg is None:
                 self.on_client_left(client)
                 return
-            await self.process_msg(client, msg)
+            if await self.process_msg(client, msg) == "LEAVE_LOBBY":
+                break
 
     async def send_recent_chat(self, client: Client):
         for msg in self.recent_chat_msgs:
@@ -346,6 +407,9 @@ class Lobby:
     async def process_msg(self, client: Client, msg: Message):
         if msg.type == "SEND_CHAT": await self.on_chat_msg(client, msg)
         elif msg.type == "CREATE_LOBBY": await self.on_create_lobby(client, msg)
+        elif msg.type == "JOIN_LOBBY": await self.on_join_lobby(client, msg)
+        elif msg.type == "LEAVE_LOBBY": return "LEAVE_LOBBY"
+        elif msg.type == "LIST_LOBBIES": await self.on_list_lobbies(client, msg)
         elif msg.type == "CREATE_ROOM": await self.on_create_room(client, msg)
         elif msg.type == "JOIN_ROOM": await self.on_join_room(client, msg)
         else: client.tell_warning(f"Unknown message type: {msg.type}")
@@ -370,7 +434,7 @@ class Lobby:
         if len(self.model.recent_chat_msgs) > 19:
             self.model.recent_chat_msgs = self.model.recent_chat_msgs[:-19]
         self.model.recent_chat_msgs.append(msg)
-        self.model.chat_messages.append(msg)
+        self.chats.append(msg)
         self.broadcast_msg(msg)
         asyncio.create_task(self.model.save_changes())
 
@@ -378,15 +442,34 @@ class Lobby:
         if client.user is None:
             client.tell_error(f"Not authenticated!")
         else:
-            name = msg.payload['LobbyName']
+            name = msg.payload['name']
             if name in all_lobbies or await LobbyModel.find_one({'name': name}).exists():
                 client.tell_error(f"Lobby named {name} already exists.")
             else:
                 model = LobbyModel(name=name)
                 model.admins.append(client.user)
+                model.parent_lobby = self.name
                 await model.save()
                 new_lobby = Lobby(model)
+                all_lobbies[name] = new_lobby
                 client.tell_info(f"Lobby named {new_lobby.name} created successfully.")
+
+    async def on_join_lobby(self, client: Client, msg: Message):
+        name = msg.payload['name']
+        if name == self.name:
+            client.tell_info(f"You are already in the {name} lobby.")
+            return
+        lobby = await get_named_lobby(name)
+        # todo: check permissions or things?
+        if lobby is None:
+            client.tell_error(f"Cannot find lobby named: {name}")
+        else:
+            await self.handoff_to_game_lobby(client, lobby)
+
+    async def on_list_lobbies(self, client: Client, msg: Message):
+        client.write_json(dict(type="LOBBY_LIST", payload=list(
+            l.json_info for l in all_lobbies.values()
+        )))
 
     async def on_create_room(self, client: Client, msg: Message):
         pass
@@ -395,17 +478,9 @@ class Lobby:
         pass
 
 
-
-
-class GameLobby(Lobby):
-    pass
-
-
-class Room:
-    async def handoff(self, client: Client):
-        pass
-
-
+async def populate_all_lobbies():
+    async for lobby_model in LobbyModel.find_all(fetch_links=True):
+        Lobby(lobby_model)
 
 
 main_lobby: Lobby = None
@@ -413,19 +488,35 @@ main_lobby: Lobby = None
 async def get_main_lobby() -> Lobby:
     global main_lobby
     if main_lobby is None:
-        find_lobby = LobbyModel.find_one(dict(name="MainLobby"))
-        if (await find_lobby.exists()):
-            main_lobby = Lobby(await find_lobby)
+        if "MainLobby" in all_lobbies:
+            main_lobby = all_lobbies["MainLobby"]
         else:
-            model = LobbyModel(name="MainLobby")
-            asyncio.create_task(model.save())
-            main_lobby = Lobby(model)
+            find_lobby = LobbyModel.find_one(dict(name="MainLobby"), fetch_links=True)
+            if (await find_lobby.exists()):
+                main_lobby = Lobby(await find_lobby)
+            else:
+                model = LobbyModel(name="MainLobby")
+                asyncio.create_task(model.save())
+                main_lobby = Lobby(model)
     return main_lobby
 
 
 async def get_named_lobby(name: str) -> Optional[Lobby]:
     if name in all_lobbies:
         return all_lobbies[name]
-    model = await LobbyModel.find_one({'name': name})
+    model = await LobbyModel.find_one({'name': name}, fetch_links=True)
     if model is not None:
         return Lobby(model)
+
+class ChatMessages(Document):
+    msgs: list[Link[Message]]
+    lobby: Optional[str] = None
+    room: Optional[str] = None
+    game: Optional[str] = None
+
+    class Settings:
+        use_state_management = True
+
+    def append(self, msg: Message):
+        self.msgs.append(msg)
+        asyncio.create_task(self.save_changes())

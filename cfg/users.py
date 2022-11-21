@@ -47,3 +47,6 @@ def gen_uid() -> str:
 
 def sha_256(text: str) -> str:
     return hashlib.sha256(text.encode("UTF8")).hexdigest()
+
+def gen_join_code() -> str:
+    return ""

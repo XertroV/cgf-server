@@ -28,11 +28,12 @@ all_clients: set["Client"] = set()
 # updated in Lobby constructor
 all_lobbies: dict[str, "Lobby"] = dict()
 
-class Message(Document, HasCreationTs):
+class Message(Document):
     type: Indexed(str)
     payload: dict
     visibility: Indexed(str)
     user: Optional[Link[User]]
+    ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=time.time)
 
     def __getitem__(self, key):
         return self.payload[key]

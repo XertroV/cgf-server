@@ -19,7 +19,7 @@
 | `0|MainLobby` | JOIN_LOBBY | `{name: string}` | global | join a game lobby |
 | `0|MainLobby` | LIST_LOBBIES | `` | none | request a list of known lobbies |
 | `0|<LobbyName>` | LEAVE_LOBBY | `` | global | leave a game lobby |
-| `1|<LobbyName>` | CREATE_ROOM | `{}` | none, global | visibility corresponds to private/public room. public rooms are listed and can be joined by anyone. |
+| `1|<LobbyName>` | CREATE_ROOM | `{name: string, }` | none, global | visibility corresponds to private/public room. public rooms are listed and can be joined by anyone. |
 | `1|<LobbyName>` | JOIN_ROOM | `{joinCode: string}` | global ||
 
 ## From Server

@@ -48,5 +48,12 @@ def gen_uid() -> str:
 def sha_256(text: str) -> str:
     return hashlib.sha256(text.encode("UTF8")).hexdigest()
 
+join_code_allowed = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
 def gen_join_code() -> str:
-    return ""
+    ret = ""
+    while len(ret) < 6:
+        for c in os.urandom(32):
+            if chr(c) in join_code_allowed:
+                ret += chr(c)
+    return ret[:6]

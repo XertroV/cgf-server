@@ -17,6 +17,7 @@ from cfg.users import *
 
 from .User import User
 from .consts import SERVER_VERSION
+from .CommonDocument import HasCreationTs
 
 
 class MsgException(Exception):
@@ -27,12 +28,11 @@ all_clients: set["Client"] = set()
 # updated in Lobby constructor
 all_lobbies: dict[str, "Lobby"] = dict()
 
-class Message(Document):
+class Message(Document, HasCreationTs):
     type: Indexed(str)
     payload: dict
     visibility: Indexed(str)
     user: Optional[Link[User]]
-    ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
 
     def __getitem__(self, key):
         return self.payload[key]
@@ -44,7 +44,7 @@ class Message(Document):
         return { "type": self.type, "payload": self.payload, "visibility": self.visibility, "from": None if self.user is None else self.user.safe_json, "ts": self.ts }
 
 
-class LobbyModel(Document):
+class LobbyModel(Document, HasCreationTs):
     uid: Indexed(str, unique=True) = Field(default_factory=gen_uid)
     name: Indexed(str, unique=True)
     recent_chat_msgs: list[Link[Message]] = Field(default_factory=list)
@@ -52,7 +52,6 @@ class LobbyModel(Document):
     moderators: list[Link[User]] = Field(default_factory=list)
     parent_lobby: Optional[str] = None
     is_public: bool = True
-    creation_ts: float = Field(default_factory=time.time)
 
     class Settings:
         use_state_management = True
@@ -64,12 +63,12 @@ class LobbyModel(Document):
 #     pass
 
 
-class Room(Document):
+class Room(Document, HasCreationTs):
     name: Indexed(str)
     lobby: Indexed(str)
-    chat: Link["ChatMessages"]
+    chat: list[Link[Message]] = Field(default_factory=list)
     admin: Link[User]
-    mods: list[Link[User]]
+    mods: list[Link[User]] = Field(default_factory=list)
     is_public: bool
     join_code: str = Field(default_factory=gen_join_code)
 
@@ -77,7 +76,7 @@ class Room(Document):
         pass
 
 
-class GameInstance(Document):
+class GameInstance(Document, HasCreationTs):
     async def handoff(self, client: "Client"):
         pass
 

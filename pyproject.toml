@@ -5,7 +5,7 @@ description = "Simple game server for Trackmania Plugins"
 authors = ["Max Kaye <m@xk.io>"]
 license = "Public Domain"
 readme = "README.md"
-packages = [{include = "cgf_server"}]
+packages = []
 
 [tool.poetry.dependencies]
 python = "^3.10"

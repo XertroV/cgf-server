@@ -32,7 +32,7 @@ all_lobbies: dict[str, "Lobby"] = dict()
 class Message(Document):
     type: Indexed(str)
     payload: dict
-    visibility: Indexed(str)
+    visibility: Indexed(str) = "global"
     user: Optional[Link[User]]
     ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=time.time)
 
@@ -46,11 +46,15 @@ class Message(Document):
         return { "type": self.type, "payload": self.payload, "visibility": self.visibility, "from": None if self.user is None else self.user.safe_json, "ts": self.ts }
 
 
-class LobbyModel(Document):
+class HasAdminsModel(Document):
+    admins: list[Link[User]]
+    mods: list[Link[User]] = Field(default_factory=list)
+    kicked_players: list[Link[User]] = Field(default_factory=list)
+
+
+class LobbyModel(HasAdminsModel):
     uid: Indexed(str, unique=True) = Field(default_factory=gen_uid)
     name: Indexed(str, unique=True)
-    admins: list[Link[User]] = Field(default_factory=list)
-    moderators: list[Link[User]] = Field(default_factory=list)
     parent_lobby: Optional[str] = None
     is_public: bool = True
     creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
@@ -65,19 +69,20 @@ class LobbyModel(Document):
 #     pass
 
 
-class Room(Document):
+class Room(HasAdminsModel):
+    # room properties and common things
     name: Indexed(str, unique=True)
-    # name: str
     lobby: Indexed(str)
-    chat: list[Link[Message]] = Field(default_factory=list)
-    admins: list[Link[User]]
-    mods: list[Link[User]] = Field(default_factory=list)
     is_public: bool
+    is_open: bool = True
     join_code: str = Field(default_factory=gen_join_code)
+    game_start_time: float = -1
+    # state / config stuff
     player_limit: int
+    players: list[Link[User]] = Field(default_factory=list)
     n_teams: int
+    # ts
     creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
-    kicked_players: list[Link[User]] = Field(default_factory=list)
 
     class Settings:
         use_state_management = True
@@ -95,8 +100,9 @@ class Room(Document):
             name=self.name,
             player_limit=self.player_limit,
             n_teams=self.n_teams,
-            n_players=0,  # should be updated by room controller
-            is_public=self.is_public
+            n_players=len(self.players),  # might be updated by room controller
+            is_public=self.is_public,
+            is_open=self.is_open
         )
 
 
@@ -128,9 +134,11 @@ class HasClients:
                 return client
 
     def broadcast_msg(self, msg: Message):
-        msg_j = msg.safe_json
-        for client in self.clients:
             # if client.user != msg.user:
+        self.broadcast_json(msg.safe_json)
+
+    def broadcast_json(self, msg_j: dict):
+        for client in self.clients:
             client.write_json(msg_j)
 
     def broadcast_player_left(self, the_client: "Client"):
@@ -149,13 +157,19 @@ class HasClients:
 
 
 
-class HasAdminsModel(Document):
-    admins: list[Link[User]]
-    mods: list[Link[User]]
-
-
 class HasAdmins(HasClients):
     model: HasAdminsModel
+    to_kick: set[User]
+
+    def __init__(self):
+        super().__init__()
+        self.to_kick = set()
+        # asyncio.create_task(self.load_admins_mods())
+
+    async def load_admins_mods(self):
+        await self.model.fetch_link("admins")
+        await self.model.fetch_link("mods")
+        self.broadcast_new_admins_mods()
 
     @property
     def admins(self) -> list[Link[User]]:
@@ -164,6 +178,21 @@ class HasAdmins(HasClients):
     @property
     def mods(self) -> list[Link[User]]:
         return self.model.mods
+
+    @property
+    def admins_mods_payload(self) -> dict:
+        try:
+            pl = dict(
+                admins=[u.uid for u in self.admins],
+                mods=[u.uid for u in self.mods])
+            return pl
+        except Exception as e:
+            warning(f"Exception during admins_mods_payload: {e}\n{''.join(traceback.format_exception(e))}")
+            return dict(admins=list(), mods=list())
+
+    def broadcast_new_admins_mods(self):
+        msg = Message(type="ADMIN_MOD_STATUS", payload=self.admins_mods_payload).safe_json
+        self.broadcast_json(msg)
 
     def is_admin(self, user: User):
         return user in self.admins or any(map(lambda a: a.ref.id == user.id, self.admins))
@@ -180,8 +209,18 @@ class HasAdmins(HasClients):
     def persist_model(self):
         asyncio.create_task(self.model.save_changes())
 
+    def kick_this_client(self, client: "Client"):
+        for c in self.clients:
+            c.tell_info(f"Player Kicked: {client.user.name}")
+
+    def send_admin_mod_status(self, client: "Client"):
+        client.write_message("ADMIN_MOD_STATUS", self.admins_mods_payload)
+
     # call this from main process_msg function
     async def process_admin_msg(self, client: "Client", msg: Message):
+        if client.user in self.to_kick:
+            self.kick_this_client(client)
+            return "LEAVE"
         if msg.type == "ADD_ADMIN": await self.on_add_admin(client, msg)
         elif msg.type == "RM_ADMIN": await self.on_rm_admin(client, msg)
         elif msg.type == "ADD_MOD": await self.on_add_mod(client, msg)
@@ -189,7 +228,7 @@ class HasAdmins(HasClients):
         elif msg.type == "KICK_PLAYER": await self.on_kick_player(client, msg)
 
     def admin_only(f):
-        def inner(self, client: "Client", msg: Message):
+        def inner(self: "HasAdmins", client: "Client", msg: Message):
             if not self.is_admin(client.user):
                 client.tell_warning("Permission denied (Admin only)")
             else:
@@ -197,7 +236,7 @@ class HasAdmins(HasClients):
         return inner
 
     def mod_only(f):
-        def inner(self, client: "Client", msg: Message):
+        def inner(self: "HasAdmins", client: "Client", msg: Message):
             if not self.is_admin(client.user) and not self.is_mod(client.user):
                 client.tell_warning("Permission denied (Mod only)")
             else:
@@ -242,7 +281,13 @@ class HasAdmins(HasClients):
 
     @mod_only
     async def on_kick_player(self, client: "Client", msg: Message):
-        pass
+        to_kick_uid = msg.payload['uid']
+        c = self.find_client_from_uid(to_kick_uid)
+        if c is None: return
+        self.to_kick.add(c.user)
+        client.tell_info(f"Kicking: {c.user.name}...")
+        self.model.kicked_players.append(c.user)
+        self.persist_model()
 
 
 class HasChats(HasAdmins):
@@ -305,11 +350,18 @@ class RoomController(HasChats):
     games: set["GameController"]
     lobby_inst: "Lobby"
     container_type: Literal["lobby", "room", "game"] = "room"
+    players_ready: dict[str, bool]
+    ready_count: int = 0
+    uid_to_teams: dict[str, int]
+    teams: list[list["Client"]]
 
     def __init__(self, model=None, lobby_inst=None, **kwargs):
         super().__init__()
         self.model = model if model is not None else Room(**kwargs)
         self.lobby_inst: "Lobby" = lobby_inst
+        self.players_ready = dict()
+        self.uid_to_teams = dict()
+        self.teams = [list()] * self.model.n_teams
         asyncio.create_task(self.load_games())
 
     async def load_games(self):
@@ -342,6 +394,10 @@ class RoomController(HasChats):
     def is_public(self):
         return self.model.is_public
 
+    @property
+    def is_open(self):
+        return self.model.is_open
+
     async def handoff(self, client: "Client"):
         # todo: does this work?
         if client.user in self.model.kicked_players:
@@ -351,9 +407,11 @@ class RoomController(HasChats):
             warn(f"I already have client: {client}")
             client.tell_warning("Tried to join room twice. This is probably a bug.")
             return
+        if len(self.clients) >= self.model.player_limit:
+            client.tell_info(f"Sorry, the room is full.")
+            return
         self.on_client_entered(client)
         # await self.initialized()
-        # self.tell_client_curr_scope(client)
         try:
             await self.run_client(client)
         except Exception as e:
@@ -381,6 +439,8 @@ class RoomController(HasChats):
         asyncio.create_task(self.room_info_loop(client))
         self.broadcast_player_joined(client)
         self.send_recent_chat(client)
+        self.send_admin_mod_status(client)
+        self.on_list_teams(client, None)
         self.clients.add(client)
 
     def on_client_left(self, client: "Client"):
@@ -400,21 +460,74 @@ class RoomController(HasChats):
             if msg is None:
                 self.on_client_left(client)
                 return
-            if await self.process_msg(client, msg) == "LEAVE_ROOM":
+            if await self.process_msg(client, msg) == "LEAVE":
                 break
 
     async def process_msg(self, client: "Client", msg: Message):
-        await self.process_admin_msg(client, msg)
+        if await self.process_admin_msg(client, msg) == "LEAVE": return "LEAVE"
         await self.process_chat_msg(client, msg)
         if msg.type == "JOIN_TEAM": await self.on_join_team(client, msg)
-        elif msg.type == "MARK_READY": await self.on_mark_read(client, msg)
-        elif msg.type == "LEAVE_ROOM": return "LEAVE_ROOM"
+        if msg.type == "LIST_TEAMS": await self.on_list_teams(client, msg)
+        elif msg.type == "MARK_READY": await self.on_mark_ready(client, msg)
+        elif msg.type == "LEAVE": return "LEAVE"
+        elif msg.type == "FORCE_START": await self.on_force_start(client, msg)
 
         # elif msg.type == "": await self.on_join_room(client, msg)
         # elif msg.type == "": await self.on_join_code(client, msg)
         # else: client.tell_warning(f"Unknown message type: {msg.type}")
 
+    async def on_join_team(self, client: "Client", msg: Message):
+        tn = msg.payload['team_n']
+        if tn > self.model.n_teams: return client.tell_warning(f"Team {tn} does not exist!")
+        old_team = self.uid_to_teams.get(client.user.uid, -1)
+        if old_team != tn:
+            self.teams[tn - 1].append(client)
+            self.uid_to_teams[client.user.uid] = tn
+            if old_team > 0:
+                self.teams[old_team - 1].remove(client)
+        self.broadcast_msg(Message(type="PLAYER_JOINED_TEAM", payload=dict(uid=client.user.uid, team=tn), visibility="global"))
 
+    async def on_list_teams(self, client: "Client", msg: Message):
+        teams = [[c.user.uid for c in team] for  team in self.teams]
+        client.write_message(Message(type="LIST_TEAMS", payload={'teams': teams}, visibility="global"))
+
+    async def on_mark_ready(self, client: "Client", msg: Message):
+        if client.user.uid not in self.uid_to_teams:
+            return client.tell_error("You must join a team before you can set yourself ready.")
+        if 0 < self.model.game_start_time < time.time():
+            return client.tell_warning(f"Cannot change ready status after game started.")
+        is_ready = bool(msg.payload['ready'])
+        if self.players_ready.get(client.user.uid, False) != is_ready:
+            self.players_ready[client.user.uid] = is_ready
+            self.ready_count += 1 if is_ready else -1
+            everyone_ready = self.ready_count == len(self.clients)
+            teams_populated = all(len(team) > 0 for team in self.teams)
+            if everyone_ready and teams_populated:
+                self.on_game_start()
+            self.broadcast_msg(Message(type="PLAYER_READY", payload=dict(uid=client.user.uid, is_ready=is_ready), visibility="global"))
+            if not is_ready and 0 < self.model.game_start_time:
+                if self.game_start_forced and not self.is_mod(client.user): return
+                # abort start game
+                self.model.game_start_time = -1
+                self.model.is_open = True
+                self.persist_model()
+                self.broadcast_msg(Message(type="GAME_START_ABORT", payload={}))
+
+    @HasAdmins.mod_only
+    async def on_force_start(self, client: "Client", msg: Message):
+        self.on_game_start(forced=True)
+
+    game_start_forced = False
+
+    def on_game_start(self, forced=False):
+        self.game_start_forced = forced
+        wait_time = 5.0
+        start_time = time.time() + wait_time
+        self.model.game_start_time = start_time
+        self.model.is_open = False
+        self.persist_model()
+        msg_j = dict(type="GAME_STARTING_AT", payload={'start_time': start_time, 'wait_time': wait_time})
+        self.broadcast_json(msg_j)
 
 
 class GameController(HasChats):
@@ -657,7 +770,7 @@ class Lobby(HasChats):
     def json_info(self):
         _rooms = []
         for r in self.rooms.values():
-            if r.model.is_public:
+            if r.is_public and r.is_open:
                 _rooms.append(r.to_room_info_json)
         return {
             'name': self.name, 'n_clients': len(self.clients),
@@ -698,10 +811,15 @@ class Lobby(HasChats):
         self.broadcast_player_left(client)
 
     def on_client_entered(self, client: Client):
+        if (len(self.model.admins) == 0):
+            self.model.admins.append(client.user)
+            self.persist_model()
         self.tell_client_curr_scope(client)
         client.tell_info(f"Entered Lobby: {self.name}")
         asyncio.create_task(self.lobby_info_loop(client))
         self.broadcast_player_joined(client)
+        self.send_lobbies_list(client)
+        self.send_admin_mod_status(client)
         self.send_recent_chat(client)
         self.clients.add(client)
 
@@ -735,19 +853,19 @@ class Lobby(HasChats):
             if msg is None:
                 self.on_client_left(client)
                 return
-            if await self.process_msg(client, msg) == "LEAVE_LOBBY":
+            if await self.process_msg(client, msg) == "LEAVE":
                 break
 
     async def process_msg(self, client: Client, msg: Message):
+        if await self.process_admin_msg(client, msg) == "LEAVE": return "LEAVE"
         await self.process_chat_msg(client, msg)
-        await self.process_admin_msg(client, msg)
         return await self.process_lobby_msg(client, msg)
         # else: client.tell_warning(f"Unknown message type: {msg.type}")
 
     async def process_lobby_msg(self, client: "Client", msg: Message):
         if msg.type == "CREATE_LOBBY": await self.on_create_lobby(client, msg)
         elif msg.type == "JOIN_LOBBY": await self.on_join_lobby(client, msg)
-        elif msg.type == "LEAVE_LOBBY": return "LEAVE_LOBBY"
+        elif msg.type == "LEAVE": return "LEAVE"
         elif msg.type == "LIST_LOBBIES": await self.on_list_lobbies(client, msg)
         elif msg.type == "CREATE_ROOM": await self.on_create_room(client, msg)
         elif msg.type == "JOIN_ROOM": await self.on_join_room(client, msg)
@@ -785,6 +903,9 @@ class Lobby(HasChats):
             await self.handoff_to_game_lobby(client, lobby)
 
     async def on_list_lobbies(self, client: Client, msg: Message):
+        self.send_lobbies_list(client)
+
+    def send_lobbies_list(self, client: "Client"):
         client.write_json(dict(type="LOBBY_LIST", payload=list(
             l.json_info for l in all_lobbies.values()
         )))

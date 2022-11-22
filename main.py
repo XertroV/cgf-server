@@ -48,6 +48,8 @@ def timeit_context(name):
 
 MAIN_INIT_DONE = False
 
+MAIN_DB_NAME = os.environ.get("CGF_DB_NAME", "cgf_db")
+
 
 async def main():
     global MAIN_INIT_DONE
@@ -57,7 +59,7 @@ async def main():
     log.info(f"[version: {SERVER_VERSION}] Starting server: {HOST_NAME}:{TCP_PORT}")
 
     with timeit_context("init_beanie"):
-        await init_beanie(database=db.cgf_db, document_models=[
+        await init_beanie(database=db[MAIN_DB_NAME], document_models=[
             User, Message, LobbyModel,
             ChatMessages,
             Room, GameSession

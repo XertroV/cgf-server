@@ -67,11 +67,11 @@ async def main():
     with timeit_context("Load all users"):
         async for user in User.find_all():
             all_users[user.uid] = user
-    # log.info(f"Loaded {len(all_users)} users in {(time.time() - start_user_load) * 1000:.1f} ms")
+    log.info(f"Loaded {len(all_users)} users")
     # asyncio.create_task(get_main_lobby())  # init main lobby
     with timeit_context("Load lobbies"):
         await populate_all_lobbies()
-    # log.info(f"Loaded {len(all_lobbies)} lobbies in {(time.time() - start_lobby_load) * 1000:.1f} ms")
+    log.info(f"Loaded {len(all_lobbies)} lobbies")
 
     MAIN_INIT_DONE = True
 

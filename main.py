@@ -8,7 +8,7 @@ import traceback
 import signal
 from contextlib import contextmanager
 
-from cfg.Client import Client, ChatMessages, Lobby, LobbyModel, Message, Room, GameInstance, get_main_lobby, all_clients, populate_all_lobbies, all_lobbies, all_users
+from cfg.Client import Client, ChatMessages, Lobby, LobbyModel, Message, Room, GameSession, get_main_lobby, all_clients, populate_all_lobbies, all_lobbies, all_users
 from cfg.User import User
 from cfg.consts import SERVER_VERSION
 from cfg.users import all_users
@@ -60,9 +60,8 @@ async def main():
         await init_beanie(database=db.cgf_db, document_models=[
             User, Message, LobbyModel,
             ChatMessages,
-            Room, GameInstance
-            # Lobby, Room
-        ])
+            Room, GameSession
+        ], allow_index_dropping=True)
     with timeit_context("Load all users"):
         async for user in User.find_all():
             all_users[user.uid] = user

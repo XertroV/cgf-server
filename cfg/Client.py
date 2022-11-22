@@ -4,7 +4,7 @@ from logging import debug, warn, warning
 import os
 import struct
 import traceback
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import pymongo
 from pydantic.dataclasses import dataclass
@@ -79,6 +79,9 @@ class Room(Document):
     creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
     kicked_players: list[Link[User]] = Field(default_factory=list)
 
+    class Settings:
+        use_state_management = True
+
     @property
     def to_created_room_json(self):
         return dict(
@@ -96,15 +99,229 @@ class Room(Document):
             is_public=self.is_public
         )
 
-class RoomController:
-    model: Room
-    clients: set["Client"]
-    lobby_inst: "Lobby"
 
-    def __init__(self, model=None, **kwargs):
+class GameSession(Document):
+    players: list[Link[User]]
+    room: str
+    lobby: str
+    creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
+
+    class Settings:
+        use_state_management = True
+        name = "Game"
+
+    async def handoff(self, client: "Client"):
+        pass
+
+
+
+
+class HasClients:
+    clients: set["Client"]
+
+    def __init__(self):
+        self.clients = set()
+
+    def find_client_from_uid(self, uid: str):
+        for client in self.clients:
+            if client.user.uid == uid:
+                return client
+
+    def broadcast_msg(self, msg: Message):
+        msg_j = msg.safe_json
+        for client in self.clients:
+            # if client.user != msg.user:
+            client.write_json(msg_j)
+
+    def broadcast_player_left(self, the_client: "Client"):
+        msg_j = dict(type="PLAYER_LEFT", payload=the_client.user.safe_json)
+        for client in self.clients:
+            client.write_json(msg_j)
+
+    def broadcast_player_joined(self, the_client: "Client"):
+        msg_j = dict(type="PLAYER_JOINED", payload=the_client.user.safe_json)
+        for client in self.clients:
+            client.write_json(msg_j)
+
+    def tell_player_list(self, the_client: "Client"):
+        msg_j = dict(type="PLAYER_LIST", payload={'players': [c.user.safe_json for c in self.clients]})
+        the_client.write_json(msg_j)
+
+
+
+class HasAdminsModel(Document):
+    admins: list[Link[User]]
+    mods: list[Link[User]]
+
+
+class HasAdmins(HasClients):
+    model: HasAdminsModel
+
+    @property
+    def admins(self) -> list[Link[User]]:
+        return self.model.admins
+
+    @property
+    def mods(self) -> list[Link[User]]:
+        return self.model.mods
+
+    def is_admin(self, user: User):
+        return user in self.admins or any(map(lambda a: a.ref.id == user.id, self.admins))
+
+    def is_mod(self, user: User):
+        return user in self.mods or any(map(lambda a: a.ref.id == user.id, self.mods))
+
+    def remove_admin(self, user: User):
+        self.admins.remove(user)
+
+    def remove_mod(self, user: User):
+        self.mods.remove(user)
+
+    def persist_model(self):
+        asyncio.create_task(self.model.save_changes())
+
+    # call this from main process_msg function
+    async def process_admin_msg(self, client: "Client", msg: Message):
+        if msg.type == "ADD_ADMIN": await self.on_add_admin(client, msg)
+        elif msg.type == "RM_ADMIN": await self.on_rm_admin(client, msg)
+        elif msg.type == "ADD_MOD": await self.on_add_mod(client, msg)
+        elif msg.type == "RM_MOD": await self.on_rm_mod(client, msg)
+        elif msg.type == "KICK_PLAYER": await self.on_kick_player(client, msg)
+
+    def admin_only(f):
+        def inner(self, client: "Client", msg: Message):
+            if not self.is_admin(client.user):
+                client.tell_warning("Permission denied (Admin only)")
+            else:
+                return f(client, msg)
+        return inner
+
+    def mod_only(f):
+        def inner(self, client: "Client", msg: Message):
+            if not self.is_admin(client.user) and not self.is_mod(client.user):
+                client.tell_warning("Permission denied (Mod only)")
+            else:
+                return f(client, msg)
+        return inner
+
+    @admin_only
+    async def on_add_admin(self, client: "Client", msg: Message):
+        user_uid = msg.payload['uid']
+        client = self.find_client_from_uid(user_uid)
+        if self.is_admin(client.user): return client.tell_info(f"User {client.user.name} is already an admin.")
+        self.model.admins.append(client.user)
+        self.persist_model()
+
+    @admin_only
+    async def on_rm_admin(self, client: "Client", msg: Message):
+        user_uid = msg.payload['uid']
+        to_rm = self.find_client_from_uid(user_uid)
+        if not self.is_admin(to_rm.user): return client.tell_info(f"User {to_rm.user.name} is not an admin.")
+        else:
+            self.remove_admin(to_rm.user)
+            client.tell_info(f"User {to_rm.user.name} was removed as an admin.")
+        self.persist_model()
+
+    @admin_only
+    async def on_add_mod(self, client: "Client", msg: Message):
+        user_uid = msg.payload['uid']
+        client = self.find_client_from_uid(user_uid)
+        if self.is_mod(client.user): return client.tell_info(f"User {client.user.name} is already a mod.")
+        self.model.mods.append(client.user)
+        self.persist_model()
+
+    @admin_only
+    async def on_rm_mod(self, client: "Client", msg: Message):
+        user_uid = msg.payload['uid']
+        to_rm = self.find_client_from_uid(user_uid)
+        if not self.is_mod(to_rm.user): return client.tell_info(f"User {to_rm.user.name} is not a mod.")
+        else:
+            self.remove_mod(to_rm.user)
+            client.tell_info(f"User {to_rm.user.name} was removed as a mod.")
+        self.persist_model()
+
+    @mod_only
+    async def on_kick_player(self, client: "Client", msg: Message):
+        pass
+
+
+class HasChats(HasAdmins):
+    chats: "ChatMessages" = None
+    recent_chat_msgs: list[Message]
+    container_type: Literal["lobby", "room", "game"]
+    loaded_chat: bool
+
+    def __init__(self):
+        super().__init__()
+        self.chats = None
+        self.recent_chat_msgs = list()
+        self.loaded_chat = False
+        asyncio.create_task(self.load_chat_msgs())
+
+    @property
+    def name(self):
+        raise Exception("override .name property")
+
+    async def load_chat_msgs(self):
+        if self.chats is not None: return
+        self.chats = await ChatMessages.find_one({self.container_type: self.name}, with_children=True)
+        if self.chats is None:
+            self.chats = ChatMessages(**{self.container_type: self.name, 'msgs': list()})
+            asyncio.create_task(self.chats.save())
+        n_msgs = len(self.chats.msgs)
+        start_ix = max(0, n_msgs - 20)
+        msg_ids = [self.chats.msgs[i].ref.id for i in range(start_ix, n_msgs)]
+        self.recent_chat_msgs = await Message.find(In(Message.id, msg_ids), fetch_links=True).to_list()
+        info(f"Loaded recent chats; nb: {len(self.recent_chat_msgs)}; ids: {msg_ids}")
+        self.loaded_chat = True
+
+    async def process_chat_msg(self, client: "Client", msg: Message):
+        if msg.type == "SEND_CHAT": await self.on_chat_msg(client, msg)
+
+    chat_msg_keys = {"content"}
+
+    async def on_chat_msg(self, client: "Client", msg: Message):
+        if (msg.user is None): return
+        if set(msg.payload.keys()) != self.chat_msg_keys:
+            return client.tell_error(f"Chat message expects keys: {self.chat_msg_keys}")
+        if not isinstance(msg['content'], str) or len(msg['content']) > 1024:
+            return client.tell_error(f"Content wrong type or >1024 in length")
+        while len(self.recent_chat_msgs) > 19:
+            self.recent_chat_msgs.pop(0)
+        self.recent_chat_msgs.append(msg)
+        self.chats.append(msg)
+        self.broadcast_msg(msg)
+
+    def send_recent_chat(self, client: "Client"):
+        for msg in self.recent_chat_msgs:
+            client.write_json(msg.safe_json)
+        info(f"Sent recent chats ({len(self.recent_chat_msgs)}) to {client.client_ip}")
+
+
+
+
+class RoomController(HasChats):
+    model: Room
+    games: set["GameController"]
+    lobby_inst: "Lobby"
+    container_type: Literal["lobby", "room", "game"] = "room"
+
+    def __init__(self, model=None, lobby_inst=None, **kwargs):
+        super().__init__()
         self.model = model if model is not None else Room(**kwargs)
-        self.clients: set[Client] = set()
-        self.lobby_inst: "Lobby" = None
+        self.lobby_inst: "Lobby" = lobby_inst
+        asyncio.create_task(self.load_games())
+
+    async def load_games(self):
+        games = GameSession.find(
+            GTE(GameSession.creation_ts, time.time() - 3600), # within last hour
+            Eq(GameSession.room, self.name),
+            Eq(GameSession.lobby, self.lobby_inst.name),
+            fetch_links=True)
+        async for game_model in games:
+            game = GameController(game_model, room_inst=self)
+            self.games[game.name] = game
+        self.loaded_games = True
 
     @property
     def name(self): return self.model.name
@@ -136,7 +353,7 @@ class RoomController:
             return
         self.on_client_entered(client)
         # await self.initialized()
-        self.tell_client_curr_scope(client)
+        # self.tell_client_curr_scope(client)
         try:
             await self.run_client(client)
         except Exception as e:
@@ -156,29 +373,52 @@ class RoomController:
     def on_client_handed_off(self, client: "Client"):
         if client in self.clients:
             self.clients.remove(client)
+        self.broadcast_player_left(client)
 
     def on_client_entered(self, client: "Client"):
-        self.clients.add(client)
         self.tell_client_curr_scope(client)
         client.tell_info(f"Entered Room: {self.name}")
         asyncio.create_task(self.room_info_loop(client))
+        self.broadcast_player_joined(client)
+        self.send_recent_chat(client)
+        self.clients.add(client)
 
     def on_client_left(self, client: "Client"):
         client.disconnect()
         if client in self.clients:
             self.clients.remove(client)
+        self.broadcast_player_left(client)
 
     # main room loop
     # - chatting
     # - join teams
     # - mark ready
     async def run_client(self, client: "Client"):
-        pass
+        # self.send_recent_chat(client)
+        while True:
+            msg = await client.read_valid()
+            if msg is None:
+                self.on_client_left(client)
+                return
+            if await self.process_msg(client, msg) == "LEAVE_ROOM":
+                break
 
-class GameInstance(Document):
-    creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
-    async def handoff(self, client: "Client"):
-        pass
+    async def process_msg(self, client: "Client", msg: Message):
+        await self.process_admin_msg(client, msg)
+        await self.process_chat_msg(client, msg)
+        if msg.type == "JOIN_TEAM": await self.on_join_team(client, msg)
+        elif msg.type == "MARK_READY": await self.on_mark_read(client, msg)
+        elif msg.type == "LEAVE_ROOM": return "LEAVE_ROOM"
+
+        # elif msg.type == "": await self.on_join_room(client, msg)
+        # elif msg.type == "": await self.on_join_code(client, msg)
+        # else: client.tell_warning(f"Unknown message type: {msg.type}")
+
+
+
+
+class GameController(HasChats):
+    model: GameSession
 
 
 
@@ -362,25 +602,19 @@ class Client:
 
 
 
-class Lobby:
-    clients: set[Client]
+class Lobby(HasChats):
     rooms: dict[str, RoomController]
     model: LobbyModel
-    chats: "ChatMessages"
-    recent_chat_msgs: list[Message]
+    container_type = "lobby"
 
     def __init__(self, model: LobbyModel) -> None:
-        self.clients = set()
+        super().__init__()
         self.rooms = dict()
         self.model = model
         if (model.name in all_lobbies):
             raise Exception("Lobby created more than once but exists in dict already")
         all_lobbies[model.name] = self
-        self.loaded_chat = False
         self.loaded_rooms = False
-        self.chats = None
-        self.recent_chat_msgs = list()
-        asyncio.create_task(self.load_chat_msgs())
         asyncio.create_task(self.load_rooms())
 
 
@@ -412,24 +646,10 @@ class Lobby:
         while not self.loaded_chat or not self.loaded_rooms:
             await asyncio.sleep(0.05)
 
-    async def load_chat_msgs(self):
-        if self.chats is not None: return
-        self.chats = await ChatMessages.find_one({'lobby': self.name}, with_children=True)
-        if self.chats is None:
-            self.chats = ChatMessages(lobby=self.name, msgs=list())
-            asyncio.create_task(self.chats.save())
-        n_msgs = len(self.chats.msgs)
-        start_ix = max(0, n_msgs - 20)
-        msg_ids = [self.chats.msgs[i].ref.id for i in range(start_ix, n_msgs)]
-        self.recent_chat_msgs = await Message.find(In(Message.id, msg_ids), fetch_links=True).to_list()
-        info(f"Loaded recent chats; nb: {len(self.recent_chat_msgs)}; ids: {msg_ids}")
-        self.loaded_chat = True
-
     async def load_rooms(self):
         rooms = Room.find(GTE(Room.creation_ts, time.time() - 86400), Eq(Room.lobby, self.name), fetch_links=True)
         async for room_model in rooms:
-            room = RoomController(room_model)
-            room.lobby_inst = self
+            room = RoomController(room_model, lobby_inst=self)
             self.rooms[room.name] = room
         self.loaded_rooms = True
 
@@ -455,7 +675,7 @@ class Lobby:
         self.on_client_entered(client)
         all_clients.add(client)
         await self.initialized()
-        self.tell_client_curr_scope(client)
+        # self.tell_client_curr_scope(client)
         info(f"Running client: {client.client_ip}")
         try:
             await self.run_client(client)
@@ -475,12 +695,15 @@ class Lobby:
     def on_client_handed_off(self, client: Client):
         if client in self.clients:
             self.clients.remove(client)
+        self.broadcast_player_left(client)
 
     def on_client_entered(self, client: Client):
-        self.clients.add(client)
         self.tell_client_curr_scope(client)
         client.tell_info(f"Entered Lobby: {self.name}")
         asyncio.create_task(self.lobby_info_loop(client))
+        self.broadcast_player_joined(client)
+        self.send_recent_chat(client)
+        self.clients.add(client)
 
     def on_client_left(self, client: Client):
         client.disconnect()
@@ -498,7 +721,7 @@ class Lobby:
             client.tell_warning("Can only hand off to game lobby from the main lobby")
 
     async def handoff_to_room(self, client: Client, room: "RoomController"):
-        if True or self.model.parent_lobby is not None:
+        if self.model.parent_lobby is not None or True:
             self.on_client_handed_off(client)
             await room.handoff(client)
             self.on_client_entered(client)
@@ -506,7 +729,7 @@ class Lobby:
             client.tell_warning("Can only hand off to room from a game lobby")
 
     async def run_client(self, client: Client):
-        await self.send_recent_chat(client)
+        # self.send_recent_chat(client)
         while True:
             msg = await client.read_valid()
             if msg is None:
@@ -515,44 +738,23 @@ class Lobby:
             if await self.process_msg(client, msg) == "LEAVE_LOBBY":
                 break
 
-    async def send_recent_chat(self, client: Client):
-        for msg in self.recent_chat_msgs:
-            client.write_json(msg.safe_json)
-        info(f"Sent recent chats ({len(self.recent_chat_msgs)}) to {client.client_ip}")
-
     async def process_msg(self, client: Client, msg: Message):
-        if msg.type == "SEND_CHAT": await self.on_chat_msg(client, msg)
-        elif msg.type == "CREATE_LOBBY": await self.on_create_lobby(client, msg)
+        await self.process_chat_msg(client, msg)
+        await self.process_admin_msg(client, msg)
+        return await self.process_lobby_msg(client, msg)
+        # else: client.tell_warning(f"Unknown message type: {msg.type}")
+
+    async def process_lobby_msg(self, client: "Client", msg: Message):
+        if msg.type == "CREATE_LOBBY": await self.on_create_lobby(client, msg)
         elif msg.type == "JOIN_LOBBY": await self.on_join_lobby(client, msg)
         elif msg.type == "LEAVE_LOBBY": return "LEAVE_LOBBY"
         elif msg.type == "LIST_LOBBIES": await self.on_list_lobbies(client, msg)
         elif msg.type == "CREATE_ROOM": await self.on_create_room(client, msg)
         elif msg.type == "JOIN_ROOM": await self.on_join_room(client, msg)
         elif msg.type == "JOIN_CODE": await self.on_join_code(client, msg)
-        else: client.tell_warning(f"Unknown message type: {msg.type}")
-
-    def broadcast_msg(self, msg: Message):
-        msg_j = msg.safe_json
-        for client in self.clients:
-            # if client.user != msg.user:
-            client.write_json(msg_j)
 
     async def on_msg_template(self, client: Client, msg: Message):
         pass
-
-    chat_msg_keys = {"content"}
-
-    async def on_chat_msg(self, client: Client, msg: Message):
-        if (msg.user is None): return
-        if set(msg.payload.keys()) != self.chat_msg_keys:
-            return client.tell_error(f"Chat message expects keys: {self.chat_msg_keys}")
-        if not isinstance(msg['content'], str) or len(msg['content']) > 1024:
-            return client.tell_error(f"Content wrong type or >1024 in length")
-        while len(self.recent_chat_msgs) > 19:
-            self.recent_chat_msgs.pop(0)
-        self.recent_chat_msgs.append(msg)
-        self.chats.append(msg)
-        self.broadcast_msg(msg)
 
     async def on_create_lobby(self, client: Client, msg: Message):
         if client.user is None:
@@ -594,12 +796,12 @@ class Lobby:
         n_teams = max(MIN_TEAMS, min(MAX_TEAMS, int(msg.payload['n_teams'])))
         is_public = msg.visibility == "global"
         # send back: {name: string, player_limit: int, n_teams: int, is_public: bool, join_code: str}
-        room = RoomController(name=name, lobby=self.name,
+        room = RoomController(lobby_inst=self,
+            name=name, lobby=self.name,
             player_limit=player_limit, n_teams=n_teams,
             is_public=is_public,
             admins=[msg.user]
         )
-        room.lobby_inst = self
         await room.model.save()
         self.rooms[room.name] = room
         client.write_message("ROOM_INFO", room.to_created_room_json)

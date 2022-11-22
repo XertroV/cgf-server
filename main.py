@@ -6,6 +6,7 @@ import sys
 import time
 import traceback
 import signal
+from contextlib import contextmanager
 
 from cfg.Client import Client, ChatMessages, Lobby, LobbyModel, Message, Room, GameInstance, get_main_lobby, all_clients, populate_all_lobbies, all_lobbies, all_users
 from cfg.User import User
@@ -37,34 +38,56 @@ def cleanup_clients(*args):
     sys.exit(0)
 
 
+@contextmanager
+def timeit_context(name):
+    start_time = time.time()
+    yield
+    elapsed_time = time.time() - start_time
+    print('[{}] finished in {} ms'.format(name, int(elapsed_time * 1_000)))
+
+
+MAIN_INIT_DONE = False
+
+
 async def main():
+    global MAIN_INIT_DONE
     signal.signal(signal.SIGTERM, cleanup_clients)
     signal.signal(signal.SIGINT, cleanup_clients)
 
-    await init_beanie(database=db.cgf_db, document_models=[
-        User, Message, LobbyModel,
-        ChatMessages,
-        Room, GameInstance
-        # Lobby, Room
-    ])
-    start_user_load = time.time()
-    async for user in User.find_all():
-        all_users[user.uid] = user
-    log.info(f"Loaded {len(all_users)} users in {(time.time() - start_user_load) * 1000:.1f} ms")
-    # asyncio.create_task(get_main_lobby())  # init main lobby
-    start_lobby_load = time.time()
-    await populate_all_lobbies()
-    log.info(f"Loaded {len(all_lobbies)} lobbies in {(time.time() - start_lobby_load) * 1000:.1f} ms")
+    log.info(f"[version: {SERVER_VERSION}] Starting server: {HOST_NAME}:{TCP_PORT}")
 
+    with timeit_context("init_beanie"):
+        await init_beanie(database=db.cgf_db, document_models=[
+            User, Message, LobbyModel,
+            ChatMessages,
+            Room, GameInstance
+            # Lobby, Room
+        ])
+    with timeit_context("Load all users"):
+        async for user in User.find_all():
+            all_users[user.uid] = user
+    # log.info(f"Loaded {len(all_users)} users in {(time.time() - start_user_load) * 1000:.1f} ms")
+    # asyncio.create_task(get_main_lobby())  # init main lobby
+    with timeit_context("Load lobbies"):
+        await populate_all_lobbies()
+    # log.info(f"Loaded {len(all_lobbies)} lobbies in {(time.time() - start_lobby_load) * 1000:.1f} ms")
+
+    MAIN_INIT_DONE = True
 
     # start socket server and run forever
-    server_coro = await asyncio.start_server(connection_cb, HOST_NAME, TCP_PORT)
-    log.info(f"[version: {SERVER_VERSION}] Starting server: {HOST_NAME}:{TCP_PORT}")
-    async with server_coro:
-        await server_coro.serve_forever()
+    server = await asyncio.start_server(connection_cb, HOST_NAME, TCP_PORT)
+    # server_task = asyncio.create_task(server.serve_forever())
+    async with server:
+        await server.serve_forever()
+
+    # while True:
+    #     await asyncio.sleep(0.1)
+
 
 async def connection_cb(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-    c = Client(reader, writer, await get_main_lobby())
+    while not MAIN_INIT_DONE:
+        await asyncio.sleep(0.05)
+    c = Client(reader, writer)
     try:
         await c.main_loop()
     except Exception as e:

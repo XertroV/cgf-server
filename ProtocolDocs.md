@@ -6,30 +6,39 @@
 |--- |--- |--- |
 | PING | client sends to server every 5s ||
 | END | client sends to server on disconnect, or vice versa ||
-| "server" | server status info, sent to client regularly | `{"server": {"version": string, "nbClients": int}}` |
+| "server" | server status info, sent to client regularly | `{"server": {"version": string, "n_clients": int}}` |
 | "scope" | server updates client on currently active scope (MainLobby, InGameLobby, InRoom, InGame) | `{"scope": string}` |
 
 ## To Server
 
-| scope | type | payload | visibility req | notes |
-|--- |--- |--- |--- |--- |
-| init | REGISTER | `{username: string, wsid: string}` | none ||
-| init | LOGIN | `account` | none ||
-| `0|MainLobby` | CREATE_LOBBY | `{name: string}` | global | used by developers to create a game lobby. note: lobbies that are not whitelisted may be deleted after 1hr. |
-| `0|MainLobby` | JOIN_LOBBY | `{name: string}` | global | join a game lobby |
-| `0|MainLobby` | LIST_LOBBIES | `` | none | request a list of known lobbies |
-| `0|<LobbyName>` | LEAVE_LOBBY | `` | global | leave a game lobby |
-| `1|<LobbyName>` | CREATE_ROOM | `{name: string, }` | none, global | visibility corresponds to private/public room. public rooms are listed and can be joined by anyone. |
-| `1|<LobbyName>` | JOIN_ROOM | `{joinCode: string}` | global ||
+| implemented | scope | type | payload | visibility req | notes |
+|---|--- |--- |--- |--- |--- |
+|y| init | REGISTER | `{username: string, wsid: string}` | none ||
+|y| init | LOGIN | `account` | none ||
+|y| `0|MainLobby` | CREATE_LOBBY | `{name: string}` | global | used by developers to create a game lobby. note: lobbies that are not whitelisted may be deleted after 1hr. |
+|y| `0|MainLobby` | JOIN_LOBBY | `{name: string}` | global | join a game lobby |
+|y| `0|MainLobby` | LIST_LOBBIES | `` | none | request a list of known lobbies |
+|y| `0|<LobbyName>` | LEAVE_LOBBY | `` | global | leave a game lobby |
+|n| `1|<LobbyName>` | CREATE_ROOM | `{name: string, player_limit: int, n_teams: int}` | none, global | | visibility corresponds to private/public room. public rooms are listed and can be joined by anyone. |
+|n| `1|<LobbyName>` | JOIN_ROOM | `{name: string}` | global ||
+|n| `1|<LobbyName>` | JOIN_CODE | `{code: string}` | global ||
+|n| `2|<RoomName>` | JOIN_TEAM | `{}` | global ||
+|n| `2|<RoomName>` | SET_PARAMS | `{}` | global ||
+|n| `2|<RoomName>` | MARK_READY | `{}` | global ||
+|n| `2|<RoomName>` | KICK_PLAYER | `{}` | global ||
 
 ## From Server
 
-| type | payload | extra |
-|--- |--- |--- |
-| REGISTERED | `account` | |
-| LOGGED_IN | `null` | |
-| LOBBY_LIST | `array<{name: string, nbClients: int, nbRooms: int}>` | |
-| ENTERED_LOBBY | `{name: string, nbClients: int, nbRooms: int}` | |
+| implemented | scope | type | payload | extra |
+|---|---|--- |--- |--- |
+|y| init | REGISTERED | `account` | |
+|y| init | LOGGED_IN | `null` | |
+|y| `0` or `1` | LOBBY_LIST | `array<{name: string, n_clients: int, n_rooms: int}>` | |
+|y| `0` or `1` | LOBBY_INFO | `{name: string, n_clients: int, n_rooms: int, rooms: {name: string, player_limit: int, n_teams: int}[]}` | |
+|n| `0` or `1` | PLAYER_JOINED | `{name: string, id: string}` | |
+|n| `0` or `1` | PLAYER_LEFT | `{name: string, id: string}` | |
+|y| `1|<LobbyName>` | CREATED_ROOM | `{name: string, player_limit: int, player_count: int, n_teams: int, is_public: bool, join_code: str}` | |
+|y| `1|<LobbyName>` | NEW_ROOM | `{name: string, player_limit: int, player_count: int}` | |
 
 ## User Broadcast
 
@@ -39,3 +48,5 @@ These are added by the server.
 | type | payload | visibility |
 |--- |--- |--- |
 | SEND_CHAT | `{content: string}` | none, global, team, map |
+
+## InRoom

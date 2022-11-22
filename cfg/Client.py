@@ -11,13 +11,14 @@ from pydantic.dataclasses import dataclass
 from pydantic import Field
 
 from beanie import Document, PydanticObjectId, Link, Indexed
+from beanie.operators import GTE, Eq, In
 import beanie
 
 from cfg.users import *
+from cfg.consts import *
 
 from .User import User
 from .consts import SERVER_VERSION
-from .CommonDocument import HasCreationTs
 
 
 class MsgException(Exception):
@@ -45,14 +46,14 @@ class Message(Document):
         return { "type": self.type, "payload": self.payload, "visibility": self.visibility, "from": None if self.user is None else self.user.safe_json, "ts": self.ts }
 
 
-class LobbyModel(Document, HasCreationTs):
+class LobbyModel(Document):
     uid: Indexed(str, unique=True) = Field(default_factory=gen_uid)
     name: Indexed(str, unique=True)
-    recent_chat_msgs: list[Link[Message]] = Field(default_factory=list)
     admins: list[Link[User]] = Field(default_factory=list)
     moderators: list[Link[User]] = Field(default_factory=list)
     parent_lobby: Optional[str] = None
     is_public: bool = True
+    creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
 
     class Settings:
         use_state_management = True
@@ -64,20 +65,118 @@ class LobbyModel(Document, HasCreationTs):
 #     pass
 
 
-class Room(Document, HasCreationTs):
-    name: Indexed(str)
+class Room(Document):
+    name: Indexed(str, unique=True)
+    # name: str
     lobby: Indexed(str)
     chat: list[Link[Message]] = Field(default_factory=list)
-    admin: Link[User]
+    admins: list[Link[User]]
     mods: list[Link[User]] = Field(default_factory=list)
     is_public: bool
     join_code: str = Field(default_factory=gen_join_code)
+    player_limit: int
+    n_teams: int
+    creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
+    kicked_players: list[Link[User]] = Field(default_factory=list)
+
+    @property
+    def to_created_room_json(self):
+        return dict(
+            **self.to_room_info_json,
+            join_code=self.join_code
+        )
+    @property
+
+    def to_room_info_json(self):
+        return dict(
+            name=self.name,
+            player_limit=self.player_limit,
+            n_teams=self.n_teams,
+            n_players=0,  # should be updated by room controller
+            is_public=self.is_public
+        )
+
+class RoomController:
+    model: Room
+    clients: set["Client"]
+    lobby_inst: "Lobby"
+
+    def __init__(self, model=None, **kwargs):
+        self.model = model if model is not None else Room(**kwargs)
+        self.clients: set[Client] = set()
+        self.lobby_inst: "Lobby" = None
+
+    @property
+    def name(self): return self.model.name
+
+    @property
+    def to_created_room_json(self):
+        ret = self.model.to_created_room_json
+        ret['n_players'] = len(self.clients)
+        return ret
+
+    @property
+    def to_room_info_json(self):
+        ret = self.model.to_room_info_json
+        ret['n_players'] = len(self.clients)
+        return ret
+
+    @property
+    def is_public(self):
+        return self.model.is_public
 
     async def handoff(self, client: "Client"):
+        # todo: does this work?
+        if client.user in self.model.kicked_players:
+            client.tell_error(f"You can't join again because you were already kicked.")
+            return
+        if client in self.clients:
+            warn(f"I already have client: {client}")
+            client.tell_warning("Tried to join room twice. This is probably a bug.")
+            return
+        self.on_client_entered(client)
+        # await self.initialized()
+        self.tell_client_curr_scope(client)
+        try:
+            await self.run_client(client)
+        except Exception as e:
+            warning(f"[{client.client_ip}] Disconnecting: Exception during Room.run_client: {e}\n{''.join(traceback.format_exception(e))}")
+            client.tell_error("Unknown server error.")
+            # client.disconnect()
+        self.on_client_handed_off(client)
+
+    def tell_client_curr_scope(self, client: "Client"):
+        client.set_scope(f"2|{self.name}")
+
+    async def room_info_loop(self, client: "Client"):
+        while client in self.clients and not client.disconnected:
+            client.write_message("ROOM_INFO", self.to_created_room_json)
+            await asyncio.sleep(5.0)
+
+    def on_client_handed_off(self, client: "Client"):
+        if client in self.clients:
+            self.clients.remove(client)
+
+    def on_client_entered(self, client: "Client"):
+        self.clients.add(client)
+        self.tell_client_curr_scope(client)
+        client.tell_info(f"Entered Room: {self.name}")
+        asyncio.create_task(self.room_info_loop(client))
+
+    def on_client_left(self, client: "Client"):
+        client.disconnect()
+        if client in self.clients:
+            self.clients.remove(client)
+
+    # main room loop
+    # - chatting
+    # - join teams
+    # - mark ready
+    async def run_client(self, client: "Client"):
         pass
 
-
-class GameInstance(Document, HasCreationTs):
+class GameInstance(Document):
+    creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
     async def handoff(self, client: "Client"):
         pass
 
@@ -90,13 +189,12 @@ class Client:
     user: User
     lobby: "Lobby"
 
-    def __init__(self, reader, writer, main_lobby) -> None:
+    def __init__(self, reader, writer) -> None:
         self.reader = reader
         self.writer = writer
         self.uid = os.urandom(16).hex()
         self.user = None
         self.disconnected = False
-        self.lobby = main_lobby
         asyncio.create_task(self.ping_loop())
 
     def __hash__(self) -> int:
@@ -116,7 +214,7 @@ class Client:
             await asyncio.sleep(5.0)
 
     def send_server_info(self):
-        self.write_json({"server": {"version": SERVER_VERSION, "nbClients": len(all_clients)}})
+        self.write_json({"server": {"version": SERVER_VERSION, "n_clients": len(all_clients)}})
 
     async def read_msg_inner(self) -> str:
         try:
@@ -164,11 +262,12 @@ class Client:
         return msg
 
     def write_raw(self, msg: str):
+        if (self.writer.is_closing()): return
         if (len(msg) >= 2**16):
             raise MsgException(f"msg too long ({len(msg)})")
         debug(f"Write message ({len(msg)}): {msg}")
         self.writer.write(struct.pack('<H', len(msg)))
-        self.writer.writelines([bytes(msg, "UTF8")])
+        self.writer.write(bytes(msg, "UTF8"))
 
     def write_json(self, data: dict):
         return self.write_raw(json.dumps(data))
@@ -182,6 +281,7 @@ class Client:
     async def main_loop(self):
         try:
             self.send_server_info()
+            self.lobby = await get_main_lobby()
             while not self.disconnected and self.user is None:
                 await self.init_client()
         except Exception as e:
@@ -264,9 +364,10 @@ class Client:
 
 class Lobby:
     clients: set[Client]
-    rooms: dict[str, Room]
+    rooms: dict[str, RoomController]
     model: LobbyModel
     chats: "ChatMessages"
+    recent_chat_msgs: list[Message]
 
     def __init__(self, model: LobbyModel) -> None:
         self.clients = set()
@@ -278,6 +379,7 @@ class Lobby:
         self.loaded_chat = False
         self.loaded_rooms = False
         self.chats = None
+        self.recent_chat_msgs = list()
         asyncio.create_task(self.load_chat_msgs())
         asyncio.create_task(self.load_rooms())
 
@@ -289,10 +391,6 @@ class Lobby:
     @property
     def uid(self):
         return self.model.uid
-
-    @property
-    def recent_chat_msgs(self):
-        return self.model.recent_chat_msgs
 
     @property
     def admins(self):
@@ -315,24 +413,37 @@ class Lobby:
             await asyncio.sleep(0.05)
 
     async def load_chat_msgs(self):
-        for recent_msg in self.recent_chat_msgs:
-            await recent_msg.fetch_all_links()
         if self.chats is not None: return
-        self.chats = await ChatMessages.find_one({'lobby': self.name})
+        self.chats = await ChatMessages.find_one({'lobby': self.name}, with_children=True)
         if self.chats is None:
             self.chats = ChatMessages(lobby=self.name, msgs=list())
             asyncio.create_task(self.chats.save())
+        n_msgs = len(self.chats.msgs)
+        start_ix = max(0, n_msgs - 20)
+        msg_ids = [self.chats.msgs[i].ref.id for i in range(start_ix, n_msgs)]
+        self.recent_chat_msgs = await Message.find(In(Message.id, msg_ids), fetch_links=True).to_list()
+        info(f"Loaded recent chats; nb: {len(self.recent_chat_msgs)}; ids: {msg_ids}")
         self.loaded_chat = True
 
     async def load_rooms(self):
-        rooms = Room.find_many({}, fetch_links=True)
-        async for room in rooms:
+        rooms = Room.find(GTE(Room.creation_ts, time.time() - 86400), Eq(Room.lobby, self.name), fetch_links=True)
+        async for room_model in rooms:
+            room = RoomController(room_model)
+            room.lobby_inst = self
             self.rooms[room.name] = room
         self.loaded_rooms = True
 
     @property
     def json_info(self):
-        return {'name': self.name, 'nbClients': len(self.clients), 'nbRooms': len(self.rooms), 'rooms': [r.name if r.is_public else "PRIVATE" for r in self.rooms.values()]}
+        _rooms = []
+        for r in self.rooms.values():
+            if r.model.is_public:
+                _rooms.append(r.to_room_info_json)
+        return {
+            'name': self.name, 'n_clients': len(self.clients),
+            'n_rooms': len(self.rooms), 'n_public_rooms': len(_rooms),
+            'rooms': _rooms
+        }
 
     # HANDOFF
 
@@ -356,6 +467,11 @@ class Lobby:
     def tell_client_curr_scope(self, client: Client):
         client.set_scope(f"{0 if self.parent_lobby is None else 1}|{self.name}")
 
+    async def lobby_info_loop(self, client: Client):
+        while client in self.clients and not client.disconnected:
+            client.write_message("LOBBY_INFO", self.json_info)
+            await asyncio.sleep(5.0)
+
     def on_client_handed_off(self, client: Client):
         if client in self.clients:
             self.clients.remove(client)
@@ -364,7 +480,14 @@ class Lobby:
         self.clients.add(client)
         self.tell_client_curr_scope(client)
         client.tell_info(f"Entered Lobby: {self.name}")
-        client.write_message("ENTERED_LOBBY", self.json_info)
+        asyncio.create_task(self.lobby_info_loop(client))
+
+    def on_client_left(self, client: Client):
+        client.disconnect()
+        if client in self.clients:
+            self.clients.remove(client)
+        if client in all_clients:
+            all_clients.remove(client)
 
     async def handoff_to_game_lobby(self, client: Client, dest: "Lobby"):
         if self.model.parent_lobby is None:
@@ -374,20 +497,13 @@ class Lobby:
         else:
             client.tell_warning("Can only hand off to game lobby from the main lobby")
 
-    async def handoff_to_room(self, client: Client, room: "Room"):
-        if self.model.parent_lobby is not None:
+    async def handoff_to_room(self, client: Client, room: "RoomController"):
+        if True or self.model.parent_lobby is not None:
             self.on_client_handed_off(client)
             await room.handoff(client)
             self.on_client_entered(client)
         else:
             client.tell_warning("Can only hand off to room from a game lobby")
-
-    def on_client_left(self, client: Client):
-        client.disconnect()
-        if client in self.clients:
-            self.clients.remove(client)
-        if client in all_clients:
-            all_clients.remove(client)
 
     async def run_client(self, client: Client):
         await self.send_recent_chat(client)
@@ -412,6 +528,7 @@ class Lobby:
         elif msg.type == "LIST_LOBBIES": await self.on_list_lobbies(client, msg)
         elif msg.type == "CREATE_ROOM": await self.on_create_room(client, msg)
         elif msg.type == "JOIN_ROOM": await self.on_join_room(client, msg)
+        elif msg.type == "JOIN_CODE": await self.on_join_code(client, msg)
         else: client.tell_warning(f"Unknown message type: {msg.type}")
 
     def broadcast_msg(self, msg: Message):
@@ -431,12 +548,11 @@ class Lobby:
             return client.tell_error(f"Chat message expects keys: {self.chat_msg_keys}")
         if not isinstance(msg['content'], str) or len(msg['content']) > 1024:
             return client.tell_error(f"Content wrong type or >1024 in length")
-        if len(self.model.recent_chat_msgs) > 19:
-            self.model.recent_chat_msgs = self.model.recent_chat_msgs[:-19]
-        self.model.recent_chat_msgs.append(msg)
+        while len(self.recent_chat_msgs) > 19:
+            self.recent_chat_msgs.pop(0)
+        self.recent_chat_msgs.append(msg)
         self.chats.append(msg)
         self.broadcast_msg(msg)
-        asyncio.create_task(self.model.save_changes())
 
     async def on_create_lobby(self, client: Client, msg: Message):
         if client.user is None:
@@ -472,10 +588,41 @@ class Lobby:
         )))
 
     async def on_create_room(self, client: Client, msg: Message):
-        pass
+        # incoming: {name: string, player_limit: int, n_teams: int}
+        name = str(msg.payload['name'])
+        player_limit = max(MIN_PLAYERS, min(MAX_PLAYERS, int(msg.payload['player_limit'])))
+        n_teams = max(MIN_TEAMS, min(MAX_TEAMS, int(msg.payload['n_teams'])))
+        is_public = msg.visibility == "global"
+        # send back: {name: string, player_limit: int, n_teams: int, is_public: bool, join_code: str}
+        room = RoomController(name=name, lobby=self.name,
+            player_limit=player_limit, n_teams=n_teams,
+            is_public=is_public,
+            admins=[msg.user]
+        )
+        room.lobby_inst = self
+        await room.model.save()
+        self.rooms[room.name] = room
+        client.write_message("ROOM_INFO", room.to_created_room_json)
+        await self.handoff_to_room(client, room)
 
     async def on_join_room(self, client: Client, msg: Message):
-        pass
+        name = msg.payload.get('name', None)
+        room = self.rooms.get(name, None)
+        if room is None or not room.is_public:
+            client.tell_warning(f"Room not found or is not public: {name}")
+        else:
+            await self.handoff_to_room(client, room)
+
+    async def on_join_code(self, client: Client, msg: Message):
+        code = msg.payload.get('code', None)
+        room_model = None if code is None else await Room.find_one({'join_code': code})
+        room = None if room_model is None else self.rooms.get(room_model.name, None)
+        if room is None:
+            client.tell_warning(f"Cannot find room with join code: {code}")
+        else:
+            await self.handoff_to_room(client, room)
+
+
 
 
 async def populate_all_lobbies():

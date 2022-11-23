@@ -65,8 +65,10 @@ These are added by the server.
 PLAYER_JOINED, etc
 
 |y| 2 | LIST_TEAMS | `{teams: str[][]}` | note: list of user UIDs |
+|y| 2 | LIST_READY_STATUS | `{uids: str[], ready: bool[]}` | note: list of user UIDs |
+<!-- |y| 2 | LIST_PLAYERS | `{players: str[]}` | players in this room / lobby. note: list of user UIDs | -->
 |y| 2 | ADMIN_MOD_STATUS | `{admins: str[], mods: str[]}` | note: lists of user UIDs |
 |y| 2 | PLAYER_JOINED_TEAM | `{uid: str, team: int}` |
-|y| 2 | PLAYER_READY | `{uid: str, is_ready: bool}` |
+|y| 2 | PLAYER_READY | `{uid: str, is_ready: bool, ready_count: int}` | `ready_count` is the total number of players that are ready |
 |y| 2 | GAME_STARTING_AT | `{start_time: float, wait_time: float}` |
 |y| 2 | GAME_START_ABORT | `{}` |

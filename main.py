@@ -73,6 +73,22 @@ async def main():
         await populate_all_lobbies()
     log.info(f"Loaded {len(all_lobbies)} lobbies")
 
+    count_rooms = 0
+    with timeit_context("Load rooms"):
+        for lobby in all_lobbies.values():
+            await lobby.initialized()
+            count_rooms += len(lobby.rooms)
+
+    count_games = 0
+    with timeit_context("Load games"):
+        for lobby in all_lobbies.values():
+            for room in lobby.rooms.values():
+                await room.initialized()
+                count_games += 1 if room.game is not None else 0
+
+    log.info(f"Loaded {count_rooms} total with {count_games} games")
+
+
     MAIN_INIT_DONE = True
 
     # start socket server and run forever
@@ -97,4 +113,5 @@ async def connection_cb(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         log.warn(f"Exception in client main loop: {e}\n{''.join(traceback.format_exception(e))}")
 
 if __name__ == "__main__":
+    log.info("Server starting...")
     asyncio.run(main())

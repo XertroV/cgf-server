@@ -4,7 +4,7 @@ from logging import debug, warn, warning
 import os
 import struct
 import traceback
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 
 import pymongo
 from pydantic.dataclasses import dataclass
@@ -154,7 +154,6 @@ class HasClients:
     def tell_player_list(self, the_client: "Client"):
         msg_j = dict(type="PLAYER_LIST", payload={'players': [c.user.safe_json for c in self.clients]})
         the_client.write_json(msg_j)
-
 
 
 class HasAdmins(HasClients):
@@ -347,7 +346,8 @@ class HasChats(HasAdmins):
 
 class RoomController(HasChats):
     model: Room
-    games: set["GameController"]
+    game: Union["GameController", None] = None
+    loaded_game = False
     lobby_inst: "Lobby"
     container_type: Literal["lobby", "room", "game"] = "room"
     players_ready: dict[str, bool]
@@ -358,13 +358,18 @@ class RoomController(HasChats):
     def __init__(self, model=None, lobby_inst=None, **kwargs):
         super().__init__()
         self.model = model if model is not None else Room(**kwargs)
+        # self.game = None
         self.lobby_inst: "Lobby" = lobby_inst
         self.players_ready = dict()
         self.uid_to_teams = dict()
-        self.teams = [list()] * self.model.n_teams
-        asyncio.create_task(self.load_games())
+        self.teams = [list() for _ in range(self.model.n_teams)]
+        asyncio.create_task(self.load_game())
 
-    async def load_games(self):
+    async def initialized(self):
+        while not self.loaded_chat or not self.loaded_game:
+            await asyncio.sleep(0.05)
+
+    async def load_game(self):
         games = GameSession.find(
             GTE(GameSession.creation_ts, time.time() - 3600), # within last hour
             Eq(GameSession.room, self.name),
@@ -373,7 +378,7 @@ class RoomController(HasChats):
         async for game_model in games:
             game = GameController(game_model, room_inst=self)
             self.games[game.name] = game
-        self.loaded_games = True
+        self.loaded_game = True
 
     @property
     def name(self): return self.model.name
@@ -382,12 +387,14 @@ class RoomController(HasChats):
     def to_created_room_json(self):
         ret = self.model.to_created_room_json
         ret['n_players'] = len(self.clients)
+        ret['ready_count'] = self.ready_count
         return ret
 
     @property
     def to_room_info_json(self):
         ret = self.model.to_room_info_json
         ret['n_players'] = len(self.clients)
+        ret['ready_count'] = self.ready_count
         return ret
 
     @property
@@ -426,28 +433,31 @@ class RoomController(HasChats):
     async def room_info_loop(self, client: "Client"):
         while client in self.clients and not client.disconnected:
             client.write_message("ROOM_INFO", self.to_created_room_json)
+            self.tell_player_list(client)
+            self.on_list_teams(client)
             await asyncio.sleep(5.0)
 
     def on_client_handed_off(self, client: "Client"):
+        self.players_ready.pop(client.user.uid, False)
+        self.remove_player_from_teams(client)
+        self.broadcast_player_left(client)
         if client in self.clients:
             self.clients.remove(client)
-        self.broadcast_player_left(client)
 
     def on_client_entered(self, client: "Client"):
         self.tell_client_curr_scope(client)
         client.tell_info(f"Entered Room: {self.name}")
         asyncio.create_task(self.room_info_loop(client))
-        self.broadcast_player_joined(client)
         self.send_recent_chat(client)
         self.send_admin_mod_status(client)
-        self.on_list_teams(client, None)
+        self.on_list_teams(client)
+        self.tell_player_list(client)
         self.clients.add(client)
+        self.broadcast_player_joined(client)
 
     def on_client_left(self, client: "Client"):
+        self.on_client_handed_off(client)
         client.disconnect()
-        if client in self.clients:
-            self.clients.remove(client)
-        self.broadcast_player_left(client)
 
     # main room loop
     # - chatting
@@ -467,7 +477,8 @@ class RoomController(HasChats):
         if await self.process_admin_msg(client, msg) == "LEAVE": return "LEAVE"
         await self.process_chat_msg(client, msg)
         if msg.type == "JOIN_TEAM": await self.on_join_team(client, msg)
-        if msg.type == "LIST_TEAMS": await self.on_list_teams(client, msg)
+        elif msg.type == "LIST_TEAMS": self.on_list_teams(client)
+        elif msg.type == "LIST_PLAYERS": self.tell_player_list(client)
         elif msg.type == "MARK_READY": await self.on_mark_ready(client, msg)
         elif msg.type == "LEAVE": return "LEAVE"
         elif msg.type == "FORCE_START": await self.on_force_start(client, msg)
@@ -477,19 +488,33 @@ class RoomController(HasChats):
         # else: client.tell_warning(f"Unknown message type: {msg.type}")
 
     async def on_join_team(self, client: "Client", msg: Message):
+        if self.game_start_forced and self.model.game_start_time > 0 and not self.is_mod(client):
+            client.tell_info(f"You cannot change teams as the game was force-started by a mod.")
+            return
         tn = msg.payload['team_n']
-        if tn > self.model.n_teams: return client.tell_warning(f"Team {tn} does not exist!")
-        old_team = self.uid_to_teams.get(client.user.uid, -1)
-        if old_team != tn:
-            self.teams[tn - 1].append(client)
-            self.uid_to_teams[client.user.uid] = tn
-            if old_team > 0:
-                self.teams[old_team - 1].remove(client)
+        if tn < 0 or tn >= self.model.n_teams: return client.tell_warning(f"Team {tn+1} does not exist!")
+        self.remove_player_from_teams(client)
+        self.players_ready[client.user.uid] = False
+        self.uid_to_teams[client.user.uid] = tn
+        if client not in self.teams[tn]:
+            self.teams[tn].append(client)
         self.broadcast_msg(Message(type="PLAYER_JOINED_TEAM", payload=dict(uid=client.user.uid, team=tn), visibility="global"))
+        self.broadcast_player_ready(client)
+        self.check_game_start_abort(client)
 
-    async def on_list_teams(self, client: "Client", msg: Message):
+    def on_list_teams(self, client: "Client", msg: Message = None):
         teams = [[c.user.uid for c in team] for  team in self.teams]
-        client.write_message(Message(type="LIST_TEAMS", payload={'teams': teams}, visibility="global"))
+        client.write_message(type="LIST_TEAMS", payload={'teams': teams}, visibility="global")
+        uids = [c.user.uid for c in self.clients]
+        ready = [self.players_ready.get(c.user.uid, False) for c in self.clients]
+        client.write_message(type="LIST_READY_STATUS", payload={'uids': uids, 'ready': ready}, visibility="global")
+
+    def remove_player_from_teams(self, client: "Client"):
+        if client.user.uid in self.uid_to_teams:
+            del self.uid_to_teams[client.user.uid]
+        for team in self.teams:
+            while client in team:
+                team.remove(client)
 
     async def on_mark_ready(self, client: "Client", msg: Message):
         if client.user.uid not in self.uid_to_teams:
@@ -497,21 +522,29 @@ class RoomController(HasChats):
         if 0 < self.model.game_start_time < time.time():
             return client.tell_warning(f"Cannot change ready status after game started.")
         is_ready = bool(msg.payload['ready'])
-        if self.players_ready.get(client.user.uid, False) != is_ready:
-            self.players_ready[client.user.uid] = is_ready
-            self.ready_count += 1 if is_ready else -1
-            everyone_ready = self.ready_count == len(self.clients)
-            teams_populated = all(len(team) > 0 for team in self.teams)
-            if everyone_ready and teams_populated:
-                self.on_game_start()
-            self.broadcast_msg(Message(type="PLAYER_READY", payload=dict(uid=client.user.uid, is_ready=is_ready), visibility="global"))
-            if not is_ready and 0 < self.model.game_start_time:
-                if self.game_start_forced and not self.is_mod(client.user): return
-                # abort start game
-                self.model.game_start_time = -1
-                self.model.is_open = True
-                self.persist_model()
-                self.broadcast_msg(Message(type="GAME_START_ABORT", payload={}))
+        self.set_player_ready(client, is_ready)
+        self.broadcast_player_ready(client)
+        self.check_game_start_abort(client)
+
+    def check_game_start_abort(self, client: "Client"):
+        everyone_ready = self.ready_count == len(self.clients)
+        teams_populated = all(len(team) > 0 for team in self.teams)
+        if everyone_ready and teams_populated:
+            self.on_game_start()
+        elif 0 < self.model.game_start_time: # game started
+            if self.game_start_forced and not self.is_mod(client.user): return
+            # abort start game
+            self.model.game_start_time = -1
+            self.model.is_open = True
+            self.persist_model()
+            self.broadcast_msg(Message(type="GAME_START_ABORT", payload={}))
+
+    def set_player_ready(self, client: "Client", is_ready: bool):
+        self.players_ready[client.user.uid] = is_ready
+        self.ready_count = sum(1 if v else 0 for v in self.players_ready.values())
+
+    def broadcast_player_ready(self, client: "Client"):
+        self.broadcast_msg(Message(type="PLAYER_READY", payload=dict(uid=client.user.uid, is_ready=self.players_ready[client.user.uid], ready_count=self.ready_count), visibility="global"))
 
     @HasAdmins.mod_only
     async def on_force_start(self, client: "Client", msg: Message):
@@ -532,6 +565,7 @@ class RoomController(HasChats):
 
 class GameController(HasChats):
     model: GameSession
+    container_type: Literal["lobby", "room", "game"] = "game"
 
 
 
@@ -571,9 +605,12 @@ class Client:
 
     async def read_msg_inner(self) -> str:
         try:
-            bs = await self.reader.read(2)
-            if (len(bs) != 2):
-                info(f"Client disconnected??")
+            bs = None
+            reader_ex = self.reader.exception()
+            if reader_ex is None:
+                bs = await self.reader.read(2)
+            if (bs is None or len(bs) != 2):
+                info(f"Client disconnected?? -- Maybe Reader Exception? e:{reader_ex}")
                 self.disconnect()
                 return
             msg_len, = struct.unpack_from('<H', bs)
@@ -594,7 +631,7 @@ class Client:
             return incoming
         except Exception as e:
             self.tell_error(f"Unable to read message. {e}")
-            warn(traceback.format_exception(e))
+            # warn(traceback.format_exception(e))
 
     async def read_msg(self) -> str:
         msg_str = await self.read_msg_inner()
@@ -611,7 +648,7 @@ class Client:
         msg = await self.read_json()
         if msg is None: return None
         msg = self.validate_pl(msg)
-        await msg.insert()
+        asyncio.create_task(msg.insert())
         return msg
 
     def write_raw(self, msg: str):
@@ -817,11 +854,12 @@ class Lobby(HasChats):
         self.tell_client_curr_scope(client)
         client.tell_info(f"Entered Lobby: {self.name}")
         asyncio.create_task(self.lobby_info_loop(client))
-        self.broadcast_player_joined(client)
         self.send_lobbies_list(client)
         self.send_admin_mod_status(client)
         self.send_recent_chat(client)
+        self.tell_player_list(client)
         self.clients.add(client)
+        self.broadcast_player_joined(client)
 
     def on_client_left(self, client: Client):
         client.disconnect()

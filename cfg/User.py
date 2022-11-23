@@ -21,7 +21,7 @@ class User(Document):
 
     @property
     def safe_json(self):
-        return dict(uid=self.uid, username=self.name)
+        return dict(uid=self.uid, username=self.name, last_seen=self.last_seen)
 
     @property
     def unsafe_json(self):

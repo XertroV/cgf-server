@@ -4,7 +4,7 @@ import hashlib
 from logging import info
 import time
 
-from cfg.User import User
+from cgf.User import User
 
 
 all_users: dict[str, User] = dict()

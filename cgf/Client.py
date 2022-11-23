@@ -14,9 +14,9 @@ from beanie import Document, PydanticObjectId, Link, Indexed
 from beanie.operators import GTE, Eq, In
 import beanie
 
-from cfg.users import *
-from cfg.consts import *
-from cfg.utils import timeit_context
+from cgf.users import *
+from cgf.consts import *
+from cgf.utils import timeit_context
 
 from .User import User
 from .consts import SERVER_VERSION

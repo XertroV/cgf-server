@@ -7,12 +7,12 @@ import time
 import traceback
 import signal
 
-from cfg.Client import Client, ChatMessages, Lobby, LobbyModel, Message, Room, GameSession, get_main_lobby, all_clients, populate_all_lobbies, all_lobbies, all_users
-from cfg.User import User
-from cfg.consts import SERVER_VERSION
-from cfg.users import all_users
-from cfg.db import db
-from cfg.utils import timeit_context
+from cgf.Client import Client, ChatMessages, Lobby, LobbyModel, Message, Room, GameSession, get_main_lobby, all_clients, populate_all_lobbies, all_lobbies, all_users
+from cgf.User import User
+from cgf.consts import SERVER_VERSION
+from cgf.users import all_users
+from cgf.db import db
+from cgf.utils import timeit_context
 log.basicConfig(level=log.DEBUG)
 
 from motor.motor_asyncio import AsyncIOMotorClient

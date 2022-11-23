@@ -6,13 +6,13 @@ import sys
 import time
 import traceback
 import signal
-from contextlib import contextmanager
 
 from cfg.Client import Client, ChatMessages, Lobby, LobbyModel, Message, Room, GameSession, get_main_lobby, all_clients, populate_all_lobbies, all_lobbies, all_users
 from cfg.User import User
 from cfg.consts import SERVER_VERSION
 from cfg.users import all_users
 from cfg.db import db
+from cfg.utils import timeit_context
 log.basicConfig(level=log.DEBUG)
 
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -36,14 +36,6 @@ def cleanup_clients(*args):
     del _clients
     log.info(f"Disconnected all clients")
     sys.exit(0)
-
-
-@contextmanager
-def timeit_context(name):
-    start_time = time.time()
-    yield
-    elapsed_time = time.time() - start_time
-    print('[{}] finished in {} ms'.format(name, int(elapsed_time * 1_000)))
 
 
 MAIN_INIT_DONE = False
@@ -76,7 +68,8 @@ async def main():
     count_rooms = 0
     with timeit_context("Load rooms"):
         for lobby in all_lobbies.values():
-            await lobby.initialized()
+            # await lobby.initialized()
+            await lobby.load_rooms_task
             count_rooms += len(lobby.rooms)
 
     count_games = 0

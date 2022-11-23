@@ -16,6 +16,7 @@ import beanie
 
 from cfg.users import *
 from cfg.consts import *
+from cfg.utils import timeit_context
 
 from .User import User
 from .consts import SERVER_VERSION
@@ -86,6 +87,17 @@ class Room(HasAdminsModel):
 
     class Settings:
         use_state_management = True
+        indexes = [
+            [
+                ("creation_ts", pymongo.DESCENDING),
+                ("lobby", pymongo.TEXT),
+            ],
+            # IndexModel(
+            #     [("test_str", pymongo.DESCENDING)],
+            #     name="test_string_index_DESCENDING",
+            # ),
+        ]
+
 
     @property
     def to_created_room_json(self):
@@ -307,17 +319,18 @@ class HasChats(HasAdmins):
         raise Exception("override .name property")
 
     async def load_chat_msgs(self):
-        if self.chats is not None: return
-        self.chats = await ChatMessages.find_one({self.container_type: self.name}, with_children=True)
-        if self.chats is None:
-            self.chats = ChatMessages(**{self.container_type: self.name, 'msgs': list()})
-            asyncio.create_task(self.chats.save())
-        n_msgs = len(self.chats.msgs)
-        start_ix = max(0, n_msgs - 20)
-        msg_ids = [self.chats.msgs[i].ref.id for i in range(start_ix, n_msgs)]
-        self.recent_chat_msgs = await Message.find(In(Message.id, msg_ids), fetch_links=True).to_list()
-        info(f"Loaded recent chats; nb: {len(self.recent_chat_msgs)}; ids: {msg_ids}")
-        self.loaded_chat = True
+        with timeit_context("Load Chats"):
+            if self.chats is not None: return
+            self.chats = await ChatMessages.find_one({self.container_type: self.name}, with_children=True)
+            if self.chats is None:
+                self.chats = ChatMessages(**{self.container_type: self.name, 'msgs': list()})
+                asyncio.create_task(self.chats.save())
+            n_msgs = len(self.chats.msgs)
+            start_ix = max(0, n_msgs - 20)
+            msg_ids = [self.chats.msgs[i].ref.id for i in range(start_ix, n_msgs)]
+            self.recent_chat_msgs = await Message.find(In(Message.id, msg_ids), fetch_links=True).to_list()
+            info(f"Loaded recent chats; nb: {len(self.recent_chat_msgs)}; ids: {msg_ids}")
+            self.loaded_chat = True
 
     async def process_chat_msg(self, client: "Client", msg: Message):
         if msg.type == "SEND_CHAT": await self.on_chat_msg(client, msg)
@@ -377,7 +390,7 @@ class RoomController(HasChats):
             fetch_links=True)
         async for game_model in games:
             game = GameController(game_model, room_inst=self)
-            self.games[game.name] = game
+            self.game = game
         self.loaded_game = True
 
     @property
@@ -765,7 +778,7 @@ class Lobby(HasChats):
             raise Exception("Lobby created more than once but exists in dict already")
         all_lobbies[model.name] = self
         self.loaded_rooms = False
-        asyncio.create_task(self.load_rooms())
+        self.load_rooms_task = asyncio.create_task(self.load_rooms())
 
 
     @property
@@ -793,15 +806,16 @@ class Lobby(HasChats):
         return self.model.is_public
 
     async def initialized(self):
-        while not self.loaded_chat or not self.loaded_rooms:
+        while not self.loaded_chat or not self.load_rooms:
             await asyncio.sleep(0.05)
 
     async def load_rooms(self):
-        rooms = Room.find(GTE(Room.creation_ts, time.time() - 86400), Eq(Room.lobby, self.name), fetch_links=True)
-        async for room_model in rooms:
-            room = RoomController(room_model, lobby_inst=self)
-            self.rooms[room.name] = room
-        self.loaded_rooms = True
+        with timeit_context("Load Rooms"):
+            rooms = Room.find(GTE(Room.creation_ts, time.time() - 86400), Eq(Room.lobby, self.name), fetch_links=True)
+            async for room_model in rooms:
+                room = RoomController(room_model, lobby_inst=self)
+                self.rooms[room.name] = room
+            self.loaded_rooms = True
 
     @property
     def json_info(self):
@@ -991,6 +1005,7 @@ async def populate_all_lobbies():
         Lobby(lobby_model)
 
 
+
 main_lobby: Lobby = None
 
 async def get_main_lobby() -> Lobby:
@@ -1018,9 +1033,9 @@ async def get_named_lobby(name: str) -> Optional[Lobby]:
 
 class ChatMessages(Document):
     msgs: list[Link[Message]]
-    lobby: Optional[str] = None
-    room: Optional[str] = None
-    game: Optional[str] = None
+    lobby: Optional[Indexed(str, name="lobby_ix")] = None
+    room: Optional[Indexed(str, name="room_ix")] = None
+    game: Optional[Indexed(str, name="game_ix")] = None
 
     class Settings:
         use_state_management = True

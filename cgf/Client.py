@@ -698,8 +698,7 @@ class Client:
 
     async def init_client(self):
         # register_or_login
-        pl_j = await self.read_json()
-        msg = self.validate_pl(pl_j)
+        msg = await self.read_valid()
         if msg is None:
             return
         user = None

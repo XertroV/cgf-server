@@ -48,7 +48,7 @@ class Message(Document):
 
 
 class HasAdminsModel(Document):
-    admins: list[Link[User]]
+    admins: list[Link[User]] = Field(default_factory=list)
     mods: list[Link[User]] = Field(default_factory=list)
     kicked_players: list[Link[User]] = Field(default_factory=list)
 
@@ -90,7 +90,7 @@ class Room(HasAdminsModel):
         indexes = [
             [
                 ("creation_ts", pymongo.DESCENDING),
-                ("lobby", pymongo.TEXT),
+                ("lobby", pymongo.ASCENDING),
             ],
             # IndexModel(
             #     [("test_str", pymongo.DESCENDING)],

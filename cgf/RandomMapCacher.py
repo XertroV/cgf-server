@@ -32,13 +32,20 @@ async def ensure_known_maps_cached():
     logging.info(f"Getting {len(uncached)} uncached but known maps")
     for i, track_id in enumerate(uncached):
         await asyncio.sleep(0.300) # sleep 300 ms between checks
+        logging.info(f"Getting uncached: {track_id}")
         asyncio.create_task(cache_map(track_id))
+    max_map_id = max(_known_maps)
+    other_map_ids = set(range(0, max_map_id)) - cached_maps
+    # slowly get all the other maps proactively
+    for track_id in other_map_ids:
+        # await add_map_to_db_via_id(track_id)
+        await cache_map(track_id)
 
 def _get_bucket_keys() -> set[int]:
     cached_maps = set()
-    for k in s3_client.list_objects(Bucket=s3_bucket_name)['Contents']:
+    for k in s3.Bucket(s3_bucket_name).objects.all():
         try:
-            cached_maps.add(int(k['Key'].split('.Map.Gbx')[0]))
+            cached_maps.add(int(k.key.split('.Map.Gbx')[0]))
         except Exception as e:
             print(f"Got exception getting key: {e}")
     return cached_maps
@@ -63,6 +70,12 @@ def is_map_cached_blocking(track_id: int):
         else: raise e
     # does exist
     return True
+
+async def add_map_to_db_via_id(track_id: int):
+    if track_id not in known_maps:
+        await _add_a_specific_map(track_id)
+        known_maps.add(track_id)
+
 
 async def _download_and_cache_map(track_id: int):
     map_file = f"{track_id}.Map.Gbx"
@@ -103,6 +116,14 @@ async def _add_a_random_map():
             else:
                 logging.warning(f"Could not get random map: {resp.status} code")
 
+async def _add_a_specific_map(track_id: int):
+    async with get_session() as session:
+        async with session.get(f"https://trackmania.exchange/api/maps/get_map_info/id/{track_id}") as resp:
+            if resp.status == 200:
+                await _add_maps_from_json(dict(results=[await resp.json()]))
+            else:
+                logging.warning(f"Could not get random map: {resp.status} code")
+
 async def _add_maps_from_json(j: dict):
     if 'results' not in j:
         logging.warning(f"Response didn't contain .results")
@@ -121,7 +142,6 @@ async def _add_maps_from_json(j: dict):
         maps_to_cache.append(_map)
         added_c += 1
         if track_id in known_maps:
-            print(f'known track_id: {track_id}')
             continue
         map_docs.append(_map)
         known_maps.add(track_id)

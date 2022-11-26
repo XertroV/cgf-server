@@ -18,7 +18,7 @@ class Map(Document):
     AuthorTime: int
     UploadedAt: str
     UpdatedAt: str
-    Tags: str = Field(default_factory=str)
+    Tags: str | None
     TypeName: str
     StyleName: str | None
     RouteName: str

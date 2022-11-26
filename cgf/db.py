@@ -40,3 +40,10 @@ s3 = boto3.resource('s3',
     aws_secret_access_key=s3_secret_key,
     config=client_config
 )
+
+s3_client = boto3.client('s3',
+    endpoint_url=f'https://{s3_service_url}/',
+    aws_access_key_id=s3_access_key,
+    aws_secret_access_key=s3_secret_key,
+    config=client_config
+)

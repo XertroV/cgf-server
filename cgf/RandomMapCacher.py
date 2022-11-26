@@ -11,7 +11,7 @@ from beanie.operators import In
 from cgf.consts import SERVER_VERSION
 from cgf.http import get_session
 from cgf.models.Map import LONG_MAP_SECS, Map, MapJustID
-from cgf.db import s3, s3_bucket_name
+from cgf.db import s3, s3_bucket_name, s3_client
 
 fresh_random_maps: list[Map] = list()
 maps_to_cache: list[Map] = list()
@@ -27,8 +27,21 @@ async def init_known_maps():
 
 async def ensure_known_maps_cached():
     _known_maps = set(known_maps)
-    for i, track_id in enumerate(_known_maps):
-        asyncio.create_task(cache_map(track_id, delay_ms=300 * i))
+    cached_maps = await asyncio.get_event_loop().run_in_executor(None, _get_bucket_keys)
+    uncached = _known_maps - cached_maps
+    logging.info(f"Getting {len(uncached)} uncached but known maps")
+    for i, track_id in enumerate(uncached):
+        await asyncio.sleep(0.300) # sleep 300 ms between checks
+        asyncio.create_task(cache_map(track_id))
+
+def _get_bucket_keys() -> set[int]:
+    cached_maps = set()
+    for k in s3_client.list_objects(Bucket=s3_bucket_name)['Contents']:
+        try:
+            cached_maps.add(int(k['Key'].split('.Map.Gbx')[0]))
+        except Exception as e:
+            print(f"Got exception getting key: {e}")
+    return cached_maps
 
 async def cache_map(track_id: int, force = False, delay_ms=0):
     if delay_ms > 0:

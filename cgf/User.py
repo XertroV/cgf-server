@@ -16,6 +16,9 @@ class User(Document):
     n_logins: int = 0
     last_seen: Indexed(float, pymongo.DESCENDING) = 0
 
+    class Settings:
+        use_state_management = True
+
     def __hash__(self) -> int:
         return hash(self.secret)
 

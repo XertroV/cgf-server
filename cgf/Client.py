@@ -329,7 +329,7 @@ class HasChats(HasAdmins):
             start_ix = max(0, n_msgs - 20)
             msg_ids = [self.chats.msgs[i].ref.id for i in range(start_ix, n_msgs)]
             self.recent_chat_msgs = await Message.find(In(Message.id, msg_ids), fetch_links=True).to_list()
-            info(f"Loaded recent chats; nb: {len(self.recent_chat_msgs)}; ids: {msg_ids}")
+            info(f"[{self.container_type} | {self.name}] Loaded recent chats; nb: {len(self.recent_chat_msgs)}")
             self.loaded_chat = True
 
     async def process_chat_msg(self, client: "Client", msg: Message):
@@ -507,7 +507,7 @@ class RoomController(HasChats):
         tn = msg.payload['team_n']
         if tn < 0 or tn >= self.model.n_teams: return client.tell_warning(f"Team {tn+1} does not exist!")
         self.remove_player_from_teams(client)
-        self.players_ready[client.user.uid] = False
+        self.set_player_ready(client, False)
         self.uid_to_teams[client.user.uid] = tn
         if client not in self.teams[tn]:
             self.teams[tn].append(client)
@@ -542,7 +542,7 @@ class RoomController(HasChats):
     def check_game_start_abort(self, client: "Client"):
         everyone_ready = self.ready_count == len(self.clients)
         teams_populated = all(len(team) > 0 for team in self.teams)
-        if everyone_ready and teams_populated:
+        if everyone_ready and teams_populated and 0 > self.model.game_start_time:
             self.on_game_start()
         elif 0 < self.model.game_start_time: # game started
             if self.game_start_forced and not self.is_mod(client.user): return
@@ -625,12 +625,12 @@ class Client:
             if (bs is None or len(bs) != 2):
                 info(f"Client disconnected?? -- Maybe Reader Exception? e:{reader_ex}")
                 self.disconnect()
-                return
+                return None
             msg_len, = struct.unpack_from('<H', bs)
-            debug(f"Reading message of length: {msg_len}")
+            # debug(f"Reading message of length: {msg_len}")
             incoming = await self.reader.read(msg_len)
             incoming = incoming.decode("UTF8")
-            info(f"Read message: {incoming}")
+            # debug(f"Read message: {incoming}")
             if self.user is not None:
                 self.user.last_seen = time.time()
             if incoming == "END":
@@ -639,12 +639,14 @@ class Client:
                 return None
             if incoming == "PING": # skip pings
                 if self.user is not None:
-                    info(f"Got ping from user: {self.user.name} / {self.user.uid}")
+                    pass
+                    # info(f"Got ping from user: {self.user.name} / {self.user.uid}")
                 return None
             return incoming
         except Exception as e:
             self.tell_error(f"Unable to read message. {e}")
             # warn(traceback.format_exception(e))
+        return None
 
     async def read_msg(self) -> str:
         msg_str = await self.read_msg_inner()
@@ -654,21 +656,22 @@ class Client:
 
     async def read_json(self) -> dict:
         msg = await self.read_msg()
-        if msg is None: return None
+        if msg is None or msg == "":
+            return None
         return json.loads(msg)
 
     async def read_valid(self) -> Message:
         msg = await self.read_json()
         if msg is None: return None
         msg = self.validate_pl(msg)
-        asyncio.create_task(msg.insert())
+        await msg.insert()
         return msg
 
     def write_raw(self, msg: str):
         if (self.writer.is_closing()): return
         if (len(msg) >= 2**16):
             raise MsgException(f"msg too long ({len(msg)})")
-        debug(f"Write message ({len(msg)}): {msg}")
+        # debug(f"Write message ({len(msg)}): {msg}")
         self.writer.write(struct.pack('<H', len(msg)))
         self.writer.write(bytes(msg, "UTF8"))
 
@@ -963,9 +966,11 @@ class Lobby(HasChats):
 
     async def on_create_room(self, client: Client, msg: Message):
         # incoming: {name: string, player_limit: int, n_teams: int}
-        name = str(msg.payload['name'])
+        name = str(msg.payload['name']) + "##"+gen_uid(4)
         player_limit = max(MIN_PLAYERS, min(MAX_PLAYERS, int(msg.payload['player_limit'])))
         n_teams = max(MIN_TEAMS, min(MAX_TEAMS, int(msg.payload['n_teams'])))
+        if n_teams > player_limit:
+            return client.tell_error(f"Cannot create a room with more teams than players.")
         is_public = msg.visibility == "global"
         # send back: {name: string, player_limit: int, n_teams: int, is_public: bool, join_code: str}
         room = RoomController(lobby_inst=self,
@@ -974,6 +979,7 @@ class Lobby(HasChats):
             is_public=is_public,
             admins=[msg.user]
         )
+        # note: will throw if name collision
         await room.model.save()
         self.rooms[room.name] = room
         client.write_message("ROOM_INFO", room.to_created_room_json)

@@ -72,3 +72,18 @@ PLAYER_JOINED, etc
 |y| 2 | PLAYER_READY | `{uid: str, is_ready: bool, ready_count: int}` | `ready_count` is the total number of players that are ready |
 |y| 2 | GAME_STARTING_AT | `{start_time: float, wait_time: float}` |
 |y| 2 | GAME_START_ABORT | `{}` |
+
+
+
+
+todo:
+- on game instance start: save players and check on rejoining
+- room/lobby updates -- cache?
+- random map cache
+- raffle room
+
+
+
+- room name collision, search: `will throw if name collision`
+    - add UID and use those instead?
+    - add `##938475` after room name and hide it when rendering?

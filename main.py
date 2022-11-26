@@ -6,20 +6,31 @@ import sys
 import time
 import traceback
 import signal
+import urllib3
 
 from cgf.Client import Client, ChatMessages, Lobby, LobbyModel, Message, Room, GameSession, get_main_lobby, all_clients, populate_all_lobbies, all_lobbies, all_users
+import cgf.RandomMapCacher as RMC
 from cgf.User import User
 from cgf.consts import SERVER_VERSION
+from cgf.models.Map import Map
 from cgf.users import all_users
 from cgf.db import db
 from cgf.utils import timeit_context
 log.basicConfig(level=log.DEBUG)
+log.getLogger('boto').setLevel(log.WARNING)
+log.getLogger('boto3').setLevel(log.WARNING)
+log.getLogger('boto3.resources.factory').setLevel(log.WARNING)
+log.getLogger('boto3.resources.action').setLevel(log.WARNING)
+log.getLogger('botocore').setLevel(log.WARNING)
+log.getLogger('urllib3.connectionpool').setLevel(log.WARNING)
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 
 from beanie import Document, Indexed, init_beanie
 
+
+urllib3.connectionpool
 
 HOST_NAME = os.environ.get("CGF_HOST_NAME", "0.0.0.0")
 TCP_PORT = int(os.environ.get("CGF_PORT", "15277"))
@@ -54,7 +65,8 @@ async def main():
         await init_beanie(database=db[MAIN_DB_NAME], document_models=[
             User, Message, LobbyModel,
             ChatMessages,
-            Room, GameSession
+            Room, GameSession,
+            Map
         ], allow_index_dropping=True)
     with timeit_context("Load all users"):
         async for user in User.find_all():
@@ -78,6 +90,10 @@ async def main():
             for room in lobby.rooms.values():
                 await room.initialized()
                 count_games += 1 if room.game is not None else 0
+
+    with timeit_context("Load known maps"):
+        await RMC.init_known_maps()
+    asyncio.create_task(RMC.maintain_random_maps())
 
     log.info(f"Loaded {count_rooms} total with {count_games} games")
 

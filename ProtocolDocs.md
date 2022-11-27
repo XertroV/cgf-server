@@ -19,7 +19,7 @@
 |y| `0|MainLobby` | JOIN_LOBBY | `{name: string}` | global | join a game lobby |
 |y| `0|MainLobby` | LIST_LOBBIES | `` | none | request a list of known lobbies |
 |y| `0`,`1` | LEAVE | `` | global | leave a game lobby, will end the connection if the user is in the main lobby |
-|n| `1|<LobbyName>` | CREATE_ROOM | `{name: string, player_limit: int, n_teams: int}` | none, global | | visibility corresponds to private/public room. public rooms are listed and can be joined by anyone. |
+|n| `1|<LobbyName>` | CREATE_ROOM | `{name: string, player_limit: int, n_teams: int, maps_required: int, min_secs: int, max_secs: int}` | none, global | | visibility corresponds to private/public room. public rooms are listed and can be joined by anyone. |
 |n| `1|<LobbyName>` | JOIN_ROOM | `{name: string}` | global ||
 |n| `1|<LobbyName>` | JOIN_CODE | `{code: string}` | global ||
 
@@ -50,14 +50,16 @@ These are added by the server.
 ## InRoom
 
 |y| `2|<RoomName>` | LEAVE | `{}` | global | leave a room and return to the game lobby |
-|n| `2|<RoomName>` | JOIN_TEAM | `{team_n: int}` | global ||
+|y| `2|<RoomName>` | JOIN_TEAM | `{team_n: int}` | global ||
 |y| `2|<RoomName>` | MARK_READY | `{ready: bool}` | global ||
-|n| `2|<RoomName>` | ADD_ADMIN | `{uid: string}` | global | admin only |
-|n| `2|<RoomName>` | RM_ADMIN | `{uid: string}` | global | admin only |
-|n| `2|<RoomName>` | ADD_MOD | `{uid: string}` | global | admin only |
-|n| `2|<RoomName>` | RM_MOD | `{uid: string}` | global | admin only |
-|n| `2|<RoomName>` | KICK_PLAYER | `{uid: string}` | global | admin/mod only |
-|n| `2|<RoomName>` | FORCE_START | `{}` | global | admin/mod only |
+|n| `2|<RoomName>` | JOIN_GAME_NOW | `{}` | global | client sends after game has started |
+
+|t| `2|<RoomName>` | ADD_ADMIN | `{uid: string}` | global | admin only |
+|t| `2|<RoomName>` | RM_ADMIN | `{uid: string}` | global | admin only |
+|t| `2|<RoomName>` | ADD_MOD | `{uid: string}` | global | admin only |
+|t| `2|<RoomName>` | RM_MOD | `{uid: string}` | global | admin only |
+|t| `2|<RoomName>` | KICK_PLAYER | `{uid: string}` | global | admin/mod only |
+|y| `2|<RoomName>` | FORCE_START | `{}` | global | admin/mod only |
 
 
 
@@ -74,6 +76,22 @@ PLAYER_JOINED, etc
 |y| 2 | GAME_START_ABORT | `{}` |
 
 
+## IN GAME
+
+### from server
+
+|n| 3 | GAME_FULL_INFO | `{}` ||
+|n| 3 | GAME_INFO | `{}` ||
+|y| 3 | ADMIN_MOD_STATUS | `{admins: str[], mods: str[]}` | note: lists of user UIDs |
+
+|n| 3 | MAP_LIST_UPDATE | `{}` ||
+|n| 3 | MAP_VOTE_RESULT | `{}` ||
+|n| 3 | MAP_VOTE_INITIATED | `{}` ||
+
+### to server
+
+|n| 3 | MAP_VOTE_START | `{}` ||
+|n| 3 | MAP_VOTE_SUBMIT | `{}` ||
 
 
 todo:

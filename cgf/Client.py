@@ -14,9 +14,11 @@ from beanie import Document, PydanticObjectId, Link, Indexed
 from beanie.operators import GTE, Eq, In
 import beanie
 
+import cgf.RandomMapCacher as RMC
+from cgf.models.Map import Map
 from cgf.users import *
 from cgf.consts import *
-from cgf.utils import timeit_context
+from cgf.utils import *
 
 from .User import User
 from .consts import SERVER_VERSION
@@ -82,6 +84,10 @@ class Room(HasAdminsModel):
     player_limit: int
     players: list[Link[User]] = Field(default_factory=list)
     n_teams: int
+    maps_required: int = Field(default=1)
+    min_secs: int = Field(default=15)
+    max_secs: int = Field(default=45)
+    map_list: list[Link[Map]] = Field(default_factory=list)
     # ts
     creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
 
@@ -114,22 +120,52 @@ class Room(HasAdminsModel):
             n_teams=self.n_teams,
             n_players=len(self.players),  # might be updated by room controller
             is_public=self.is_public,
-            is_open=self.is_open
+            is_open=self.is_open,
+            n_maps=self.maps_required,
+            min_secs=self.min_secs,
+            max_secs=self.max_secs,
         )
 
 
-class GameSession(Document):
+class GameSession(HasAdminsModel):
     players: list[Link[User]]
+    game_msgs: list[Link[Message]] = Field(default_factory=list)
     room: str
     lobby: str
+    # list of player UIDs
+    teams: list[list[str]]
+    map_list: list[Link[Map]]
     creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
 
     class Settings:
         use_state_management = True
         name = "Game"
 
-    async def handoff(self, client: "Client"):
-        pass
+        indexes = [
+            pymongo.IndexModel(
+                [
+                    ("room", pymongo.ASCENDING),
+                    ("lobby", pymongo.ASCENDING),
+                ],
+                name="room_lobby_uniq",
+                unique=True,
+            ),
+        ]
+
+
+    @property
+    def to_full_game_info_json(self):
+        return dict(
+            players=[p.safe_json for p in self.players],
+            n_game_msgs=len(self.game_msgs),
+            teams=self.teams,
+        )
+
+    @property
+    def to_inprog_game_info_json(self):
+        return dict(
+            n_game_msgs=len(self.game_msgs),
+        )
 
 
 
@@ -361,6 +397,7 @@ class RoomController(HasChats):
     model: Room
     game: Union["GameController", None] = None
     loaded_game = False
+    loaded_maps = False
     lobby_inst: "Lobby"
     container_type: Literal["lobby", "room", "game"] = "room"
     players_ready: dict[str, bool]
@@ -377,21 +414,34 @@ class RoomController(HasChats):
         self.uid_to_teams = dict()
         self.teams = [list() for _ in range(self.model.n_teams)]
         asyncio.create_task(self.load_game())
+        asyncio.create_task(self.load_maps())
 
     async def initialized(self):
-        while not self.loaded_chat or not self.loaded_game:
-            await asyncio.sleep(0.05)
+        while not self.loaded_chat or not self.loaded_game or not self.loaded_maps:
+            await asyncio.sleep(0.01)
 
     async def load_game(self):
-        games = GameSession.find(
-            GTE(GameSession.creation_ts, time.time() - 3600), # within last hour
+        game_model = await GameSession.find_one(
+            # GTE(GameSession.creation_ts, time.time() - (3600 * 6)), # within last 6 hrs
             Eq(GameSession.room, self.name),
             Eq(GameSession.lobby, self.lobby_inst.name),
             fetch_links=True)
-        async for game_model in games:
+        if game_model is not None:
             game = GameController(game_model, room_inst=self)
             self.game = game
         self.loaded_game = True
+
+    async def load_maps(self):
+        maps_needed = self.model.maps_required - len(self.model.map_list)
+        if maps_needed > 0:
+            log.debug(f"Room asking for {maps_needed} maps.")
+            async for m in RMC.get_some_maps(maps_needed):
+                log.debug(f"Got map: {m.json()}")
+                if (m.id is None):
+                    await m.save()
+                self.model.map_list.append(m)
+        self.persist_model()
+        self.loaded_maps = True
 
     @property
     def name(self): return self.model.name
@@ -431,7 +481,7 @@ class RoomController(HasChats):
             client.tell_info(f"Sorry, the room is full.")
             return
         self.on_client_entered(client)
-        # await self.initialized()
+        await self.initialized()
         try:
             await self.run_client(client)
         except Exception as e:
@@ -495,6 +545,7 @@ class RoomController(HasChats):
         elif msg.type == "MARK_READY": await self.on_mark_ready(client, msg)
         elif msg.type == "LEAVE": return "LEAVE"
         elif msg.type == "FORCE_START": await self.on_force_start(client, msg)
+        elif msg.type == "JOIN_GAME_NOW": await self.on_join_game_now(client, msg)
 
         # elif msg.type == "": await self.on_join_room(client, msg)
         # elif msg.type == "": await self.on_join_code(client, msg)
@@ -529,10 +580,13 @@ class RoomController(HasChats):
             while client in team:
                 team.remove(client)
 
+    def has_game_started(self):
+        return 0 < self.model.game_start_time < time.time()
+
     async def on_mark_ready(self, client: "Client", msg: Message):
         if client.user.uid not in self.uid_to_teams:
             return client.tell_error("You must join a team before you can set yourself ready.")
-        if 0 < self.model.game_start_time < time.time():
+        if self.has_game_started():
             return client.tell_warning(f"Cannot change ready status after game started.")
         is_ready = bool(msg.payload['ready'])
         self.set_player_ready(client, is_ready)
@@ -575,12 +629,117 @@ class RoomController(HasChats):
         msg_j = dict(type="GAME_STARTING_AT", payload={'start_time': start_time, 'wait_time': wait_time})
         self.broadcast_json(msg_j)
 
+    async def on_join_game_now(self, client: "Client", msg: Message):
+        game_started = self.has_game_started()
+        if not self.has_game_started():
+            time_left = abs(self.model.game_start_time - time.time())
+            if time_left < 1.0:
+                await asyncio.sleep(time_left + 0.05)
+            elif time_left >= 1.0:
+                client.tell_warning(f"Can't join the game early.")
+                return
+            game_started = self.has_game_started()
+        # only true if abort happened during above
+        if not game_started: return
+        # game has started, so hand off to game lobby
+        if self.game is None:
+            # this awaits loading our maps if they're not already loaded
+            await self.initialized()
+            game_model = GameSession(
+                players=[c.user for c in self.clients],
+                room=self.name,
+                lobby=self.lobby_inst.name,
+                teams=[[c.user.uid for c in team] for team in self.teams],
+                map_list=self.model.map_list,
+            )
+            self.game = GameController(game_model, self)
+        self.on_client_handed_off(client)
+        await self.game.handoff(client)
+        self.on_client_entered(client)
+
+
 
 class GameController(HasChats):
     model: GameSession
+    room: RoomController
     container_type: Literal["lobby", "room", "game"] = "game"
 
+    @property
+    def to_full_game_info_json(self):
+        return self.model.to_full_game_info_json
 
+    @property
+    def to_inprog_game_info_json(self):
+        return self.model.to_inprog_game_info_json
+
+    def __init__(self, model: GameSession | None, room_inst: RoomController):
+        self.model = model
+        self.room = room_inst
+        super().__init__()
+        self.persist_model()
+
+    async def handoff(self, client: "Client"):
+        if client.user in self.model.kicked_players:
+            client.tell_error(f"You can't join again because you were already kicked.")
+            return
+        if client in self.clients:
+            warn(f"I already have client: {client}")
+            client.tell_warning("Tried to join room twice. This is probably a bug.")
+            return
+        self.on_client_entered(client)
+        try:
+            await self.run_client(client)
+        except Exception as e:
+            warning(f"[{client.client_ip}] Disconnecting: Exception during GameController.run_client: {e}\n{''.join(traceback.format_exception(e))}")
+            client.tell_error("Unknown server error.")
+        self.on_client_handed_off(client)
+
+    def tell_client_curr_scope(self, client: "Client"):
+        client.set_scope(f"3|{self.name}")
+
+    async def game_info_loop(self, client: "Client"):
+        client.write_message("GAME_FULL_INFO", self.to_full_game_info_json)
+        while client in self.clients and not client.disconnected:
+            client.write_message("GAME_INFO", self.to_inprog_game_info_json)
+            await asyncio.sleep(5.0)
+
+    def on_client_handed_off(self, client: "Client"):
+        self.broadcast_player_left(client)
+        if client in self.clients:
+            self.clients.remove(client)
+
+    def on_client_entered(self, client: "Client"):
+        self.tell_client_curr_scope(client)
+        client.tell_info(f"Entered Game: {self.name}")
+        asyncio.create_task(self.game_info_loop(client))
+        self.send_recent_chat(client)
+        self.send_admin_mod_status(client)
+        self.tell_player_list(client)
+        self.clients.add(client)
+        self.broadcast_player_joined(client)
+        self.replay_game_so_far(client)
+
+    def on_client_left(self, client: "Client"):
+        self.on_client_handed_off(client)
+        client.disconnect()
+
+    def replay_game_so_far(self, client: "Client"):
+        for msg in self.model.game_msgs:
+            client.write_json(msg.safe_json)
+
+    async def run_client(self, client: "Client"):
+        while True:
+            msg = await client.read_valid()
+            if msg is None:
+                self.on_client_left(client)
+                return
+            if await self.process_msg(client, msg) == "LEAVE":
+                break
+
+    async def process_msg(self, client: "Client", msg: Message):
+        if await self.process_admin_msg(client, msg) == "LEAVE": return "LEAVE"
+        await self.process_chat_msg(client, msg)
+        if msg.type == "LEAVE": return "LEAVE"
 
 class Client:
     reader: asyncio.StreamReader
@@ -969,15 +1128,23 @@ class Lobby(HasChats):
         name = str(msg.payload['name']) + "##"+gen_uid(4)
         player_limit = max(MIN_PLAYERS, min(MAX_PLAYERS, int(msg.payload['player_limit'])))
         n_teams = max(MIN_TEAMS, min(MAX_TEAMS, int(msg.payload['n_teams'])))
+        n_teams = clamp(int(msg.payload['n_teams']), MIN_TEAMS, MAX_TEAMS)
         if n_teams > player_limit:
             return client.tell_error(f"Cannot create a room with more teams than players.")
         is_public = msg.visibility == "global"
+        maps_required = clamp(msg.payload['maps_required'], MIN_MAPS, MAX_MAPS)
+        min_secs = clamp(msg.payload['min_secs'], MIN_SECS, MAX_SECS)
+        max_secs = clamp(msg.payload['max_secs'], MIN_SECS, MAX_SECS)
+        if (max_secs < min_secs):
+            return client.tell_error(f"max map length less than min map length")
         # send back: {name: string, player_limit: int, n_teams: int, is_public: bool, join_code: str}
         room = RoomController(lobby_inst=self,
             name=name, lobby=self.name,
             player_limit=player_limit, n_teams=n_teams,
             is_public=is_public,
-            admins=[msg.user]
+            admins=[msg.user],
+            maps_required=maps_required,
+            min_secs=min_secs, max_secs=max_secs,
         )
         # note: will throw if name collision
         await room.model.save()

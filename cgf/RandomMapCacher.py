@@ -6,7 +6,7 @@ import time
 import botocore
 
 import aiohttp
-from beanie.operators import In
+from beanie.operators import In, Eq
 
 from cgf.consts import SERVER_VERSION
 from cgf.http import get_session
@@ -17,7 +17,7 @@ fresh_random_maps: list[Map] = list()
 maps_to_cache: list[Map] = list()
 known_maps: set[int] = set()
 
-MAINTAIN_N_MAPS = 20   #200
+MAINTAIN_N_MAPS = 2   #200
 
 async def init_known_maps():
     _maps = await Map.find_all(projection_model=MapJustID).to_list()
@@ -37,6 +37,8 @@ async def ensure_known_maps_cached():
     max_map_id = max(_known_maps)
     other_map_ids = set(range(0, max_map_id)) - cached_maps
     # slowly get all the other maps proactively
+    # todo: reenable
+    return
     for track_id in other_map_ids:
         # await add_map_to_db_via_id(track_id)
         await cache_map(track_id)
@@ -103,6 +105,7 @@ async def maintain_random_maps():
             await asyncio.sleep(0.1)
 
 async def add_more_random_maps(n: int):
+    if (n > 100): raise Exception(f"too many maps requested: {n}")
     logging.info(f"Fetching {n} random maps")
     if n <= 0: return
     await asyncio.wait([_add_a_random_map() for _ in range(n)])
@@ -138,6 +141,10 @@ async def _add_maps_from_json(j: dict):
         _map = Map(**map_j)
         if not _map.Downloadable:
             continue
+        if track_id in known_maps:
+            _map = await Map.find_one(Eq(Map.TrackID, track_id))
+        else:
+            await _map.save()  # using insert_many later doesn't populate .id
         fresh_random_maps.append(_map)
         maps_to_cache.append(_map)
         added_c += 1
@@ -147,8 +154,8 @@ async def _add_maps_from_json(j: dict):
         known_maps.add(track_id)
     # logging.info(f"Added {len(maps_j)} fresh random maps")
     # logging.info(f"Inserting {len(map_docs)} maps to DB")
-    if len(map_docs) == 0: return
-    await Map.insert_many(map_docs)
+    # if len(map_docs) == 0: return
+    # await Map.insert_many(map_docs)
     for i, tid in enumerate(track_ids):
         asyncio.create_task(cache_map(tid, delay_ms=i*100))
 
@@ -156,8 +163,8 @@ async def get_some_maps(n: int, min_secs: int = 0, max_secs: int = LONG_MAP_SECS
     min_secs = max(0, min_secs)
     max_secs = min(LONG_MAP_SECS, max_secs)
     if min_secs >= max_secs: raise Exception(f"min secs >= max secs")
-    if min_secs % 15 != 0: raise Exception(f"min_secs % 15 != 0")
-    if max_secs % 15 != 0: raise Exception(f"max_secs % 15 != 0")
+    if min_secs % 15 != 0: raise Exception(f"min_secs % 15 != 0: {min_secs}")
+    if max_secs % 15 != 0: raise Exception(f"max_secs % 15 != 0: {max_secs}")
     sent = 0
     maps_checked = 0
     while sent < n:

@@ -2,7 +2,7 @@ from pydantic import Field, BaseModel
 from beanie import Document, Indexed
 
 
-LONG_MAP_SECS = 10000
+LONG_MAP_SECS = 315
 
 
 class MapJustID(BaseModel):
@@ -23,7 +23,7 @@ class Map(Document):
     StyleName: str | None
     RouteName: str
     LengthName: str
-    LengthSecs: int
+    LengthSecs: Indexed(int)
     DifficultyName: str
     Laps: int
     Comments: str
@@ -31,20 +31,29 @@ class Map(Document):
     RatingVoteCount: int
     RatingVoteAverage: float
 
-    def __init__(self, *args, LengthName="2 m 30 s", **kwargs):
-        LengthSecs = 0
-        # can be in formats: "Long", "2 m 30 s", "1 min", "2 min", "15 secs"
-        if LengthName == "Long":
-            LengthSecs = LONG_MAP_SECS
-        elif " m " in LengthName:
-            _mins, rest = LengthName.split(" m ")
-            mins_s = int(_mins) * 60
-            secs = int(rest.split(" s")[0])
-            LengthSecs = mins_s + secs
-        elif " min" in LengthName:
-            LengthSecs = 60 * int(LengthName.split(" min")[0])
-        elif " secs" in LengthName:
-            LengthSecs = int(LengthName.split(" secs")[0])
-        else:
-            raise Exception(f"Unknown LengthName format; {LengthName}")
+    # class Settings:
+    #     indexes = [
+    #         [
+    #             ("creation_ts", pymongo.DESCENDING),
+    #             ("lobby", pymongo.ASCENDING),
+    #         ],
+    #     ]
+
+    def __init__(self, *args, LengthName="2 m 30 s", LengthSecs=None, **kwargs):
+        if LengthSecs is None:
+            LengthSecs = 0
+            # can be in formats: "Long", "2 m 30 s", "1 min", "2 min", "15 secs"
+            if LengthName == "Long":
+                LengthSecs = LONG_MAP_SECS
+            elif " m " in LengthName:
+                _mins, rest = LengthName.split(" m ")
+                mins_s = int(_mins) * 60
+                secs = int(rest.split(" s")[0])
+                LengthSecs = mins_s + secs
+            elif " min" in LengthName:
+                LengthSecs = 60 * int(LengthName.split(" min")[0])
+            elif " secs" in LengthName:
+                LengthSecs = int(LengthName.split(" secs")[0])
+            else:
+                raise Exception(f"Unknown LengthName format; {LengthName}")
         super().__init__(*args, LengthSecs=LengthSecs, LengthName=LengthName, **kwargs)

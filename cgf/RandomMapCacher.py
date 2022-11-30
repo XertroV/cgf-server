@@ -16,8 +16,9 @@ from cgf.db import s3, s3_bucket_name, s3_client
 fresh_random_maps: list[Map] = list()
 maps_to_cache: list[Map] = list()
 known_maps: set[int] = set()
+cached_maps: set[int] = set()
 
-MAINTAIN_N_MAPS = 2   #200
+MAINTAIN_N_MAPS = 5  #200
 
 async def init_known_maps():
     _maps = await Map.find_all(projection_model=MapJustID).to_list()
@@ -27,29 +28,39 @@ async def init_known_maps():
 
 async def ensure_known_maps_cached():
     _known_maps = set(known_maps)
-    cached_maps = await asyncio.get_event_loop().run_in_executor(None, _get_bucket_keys)
+    cached_maps.update(await asyncio.get_event_loop().run_in_executor(None, _get_bucket_keys))
     uncached = _known_maps - cached_maps
     logging.info(f"Getting {len(uncached)} uncached but known maps")
     for i, track_id in enumerate(uncached):
         await asyncio.sleep(0.300) # sleep 300 ms between checks
         logging.info(f"Getting uncached: {track_id}")
         asyncio.create_task(cache_map(track_id))
-    max_map_id = max(_known_maps)
+    max_map_id = 81192 if len(_known_maps) == 0 else max(_known_maps)
     other_map_ids = set(range(0, max_map_id)) - cached_maps
     # slowly get all the other maps proactively
-    # todo: reenable
-    return
     for track_id in other_map_ids:
         # await add_map_to_db_via_id(track_id)
         await cache_map(track_id)
 
 def _get_bucket_keys() -> set[int]:
     cached_maps = set()
-    for k in s3.Bucket(s3_bucket_name).objects.all():
+    avg_size = 0
+    nb_in_avg = 0
+    bucket = s3.Bucket(s3_bucket_name)
+    for k in bucket.objects.all():
         try:
             cached_maps.add(int(k.key.split('.Map.Gbx')[0]))
+            avg_size = (avg_size * nb_in_avg + k.size) / (nb_in_avg + 1)
+            nb_in_avg += 1
         except Exception as e:
             print(f"Got exception getting key: {e}")
+        if len(cached_maps) % 1000 == 0:
+            logging.info(f"Loading cached maps... {len(cached_maps)} / ??? | avg size: {avg_size / 1024:.1f} kb")
+        # does not work when running in executor
+        # if not asyncio.get_event_loop().is_running():
+        #     logging.info(f"Breaking get bucket keys b/c event looped stopped")
+        #     break
+    logging.info(f"Loaded cached maps: {len(cached_maps)} total | avg size: {avg_size / 1024:.1f} kb")
     return cached_maps
 
 async def cache_map(track_id: int, force = False, delay_ms=0):
@@ -60,6 +71,7 @@ async def cache_map(track_id: int, force = False, delay_ms=0):
         await _download_and_cache_map(track_id)
 
 async def is_map_cached(track_id: int):
+    if track_id in cached_maps: return True
     return await asyncio.get_event_loop().run_in_executor(None, is_map_cached_blocking, track_id)
 
 def is_map_cached_blocking(track_id: int):
@@ -79,22 +91,29 @@ async def add_map_to_db_via_id(track_id: int):
         known_maps.add(track_id)
 
 
-async def _download_and_cache_map(track_id: int):
+async def _download_and_cache_map(track_id: int, retry_times=10):
     map_file = f"{track_id}.Map.Gbx"
     logging.info(f"Caching map: {map_file}")
     # does not exist
-    async with get_session() as session:
-        async with session.get(f"https://trackmania.exchange/maps/download/{track_id}") as resp:
-            if resp.status == 200:
-                map_bs = await resp.content.read()
-                await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: s3.Object(s3_bucket_name, map_file).put(
-                        ACL='public-read',
-                        Body=map_bs
+    try:
+        async with get_session() as session:
+            async with session.get(f"https://trackmania.exchange/maps/download/{track_id}") as resp:
+                if resp.status == 200:
+                    map_bs = await resp.content.read()
+                    await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: s3.Object(s3_bucket_name, map_file).put(
+                            ACL='public-read',
+                            Body=map_bs
+                        )
                     )
-                )
-                logging.info(f"Uploaded map to s3 cache: {map_file}")
+                    logging.info(f"Uploaded map to s3 cache: {map_file}")
+    except Exception as e:
+        if retry_times <= 0:
+            raise e
+        logging.warn(f"Error caching map. Waiting 10s and retrying up to {retry_times} more times")
+        await asyncio.sleep(10)
+        await _download_and_cache_map(track_id, retry_times=retry_times - 1)
 
 
 async def maintain_random_maps():

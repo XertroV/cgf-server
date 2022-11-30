@@ -19,9 +19,9 @@
 |y| `0|MainLobby` | JOIN_LOBBY | `{name: string}` | global | join a game lobby |
 |y| `0|MainLobby` | LIST_LOBBIES | `` | none | request a list of known lobbies |
 |y| `0`,`1` | LEAVE | `` | global | leave a game lobby, will end the connection if the user is in the main lobby |
-|n| `1|<LobbyName>` | CREATE_ROOM | `{name: string, player_limit: int, n_teams: int, maps_required: int, min_secs: int, max_secs: int}` | none, global | | visibility corresponds to private/public room. public rooms are listed and can be joined by anyone. |
-|n| `1|<LobbyName>` | JOIN_ROOM | `{name: string}` | global ||
-|n| `1|<LobbyName>` | JOIN_CODE | `{code: string}` | global ||
+|y| `1|<LobbyName>` | CREATE_ROOM | `{name: string, player_limit: int, n_teams: int, maps_required: int, min_secs: int, max_secs: int}` | none, global | | visibility corresponds to private/public room. public rooms are listed and can be joined by anyone. |
+|y| `1|<LobbyName>` | JOIN_ROOM | `{name: string}` | global ||
+|y| `1|<LobbyName>` | JOIN_CODE | `{code: string}` | global ||
 
 ## From Server
 
@@ -31,9 +31,9 @@
 |y| init | LOGGED_IN | `null` | |
 |y| `0` or `1` | LOBBY_LIST | `array<{name: string, n_clients: int, n_rooms: int}>` | |
 |y| `0` or `1` | LOBBY_INFO | `{name: string, n_clients: int, n_rooms: int, rooms: {name: string, player_limit: int, n_teams: int}[]}` | |
-|n| all | PLAYER_JOINED | `{username: string, uid: string}` | |
-|n| all | PLAYER_LEFT | `{username: string, uid: string}` | |
-|n| all | PLAYER_LIST | `{players: {username: string, uid: string}[]}` | |
+|y| all | PLAYER_JOINED | `{username: string, uid: string}` | |
+|y| all | PLAYER_LEFT | `{username: string, uid: string}` | |
+|y| all | PLAYER_LIST | `{players: {username: string, uid: string}[]}` | |
 |y| `1|<LobbyName>` | NEW_ROOM | `{name: string, player_limit: int, player_count: int}` | |
 
 ## User Broadcast
@@ -52,7 +52,7 @@ These are added by the server.
 |y| `2|<RoomName>` | LEAVE | `{}` | global | leave a room and return to the game lobby |
 |y| `2|<RoomName>` | JOIN_TEAM | `{team_n: int}` | global ||
 |y| `2|<RoomName>` | MARK_READY | `{ready: bool}` | global ||
-|n| `2|<RoomName>` | JOIN_GAME_NOW | `{}` | global | client sends after game has started |
+|y| `2|<RoomName>` | JOIN_GAME_NOW | `{}` | global | client sends after game has started |
 
 |t| `2|<RoomName>` | ADD_ADMIN | `{uid: string}` | global | admin only |
 |t| `2|<RoomName>` | RM_ADMIN | `{uid: string}` | global | admin only |
@@ -78,30 +78,48 @@ PLAYER_JOINED, etc
 
 ## IN GAME
 
+
+
 ### from server
 
-|n| 3 | GAME_FULL_INFO | `{}` ||
+|n| 3 | GAME_INFO_FULL | `{}` ||
 |n| 3 | GAME_INFO | `{}` ||
 |y| 3 | ADMIN_MOD_STATUS | `{admins: str[], mods: str[]}` | note: lists of user UIDs |
 
 |n| 3 | MAP_LIST_UPDATE | `{}` ||
-|n| 3 | MAP_VOTE_RESULT | `{}` ||
-|n| 3 | MAP_VOTE_INITIATED | `{}` ||
+|n| 3 | MAP_REROLL_VOTE_RESULT | `{}` ||
+|n| 3 | MAP_REROLL_VOTE_INITIATED | `{}` ||
+
+|n| 3 | G_xxxxxxxx | `any & {seq: int}` | broadcasted game messages from other clients; can be scoped via visibility. seq is the sequence number. |
 
 ### to server
 
-|n| 3 | MAP_VOTE_START | `{}` ||
-|n| 3 | MAP_VOTE_SUBMIT | `{}` ||
+|n| 3 | G_xxxxxxxx | any | game messages -- they will be broadcast to clients and should be handled by the game engine. global -> all players. team -> players on that team. map -> players on that map. |
+
+|n| 3 | ENTER_MAP | `{TrackID: int}` | sent on entering a map |
+|n| 3 | LEAVE_MAP | `{}` | sent on leaving a map |
+|n| 3 | CP_TIME | `{TrackID: int, cp: int, time: int}` | sent on getting a checkpoint |
+|n| 3 | FINAL_TIME | `{TrackID: int, cp: int, time: int}` | sent on finished race |
+
+|n| 3 | MAP_REROLL_VOTE_START | `{}` ||
+|n| 3 | MAP_REROLL_VOTE_SUBMIT | `{}` ||
+|n| 3 | MOD_MAP_REROLL | `{}` | admin/mod only |
 
 
-todo:
+# todo game:
+
+-
+
+
+# todo general:
+
 - on game instance start: save players and check on rejoining
 - room/lobby updates -- cache?
-- random map cache
 - raffle room
 
 
 
+- random map cache (done)
 - room name collision, search: `will throw if name collision`
     - add UID and use those instead?
     - add `##938475` after room name and hide it when rendering?

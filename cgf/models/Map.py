@@ -1,8 +1,45 @@
+import datetime
+
 from pydantic import Field, BaseModel
 from beanie import Document, Indexed
 
 
 LONG_MAP_SECS = 315
+
+"""Length Enums:
+0: Anything
+1: 15 seconds
+2: 30
+3: 45
+4: 1min
+5: 1:15
+6: 1:30
+7: 1:45
+8: 2:00
+9: 2:30
+10: 3:00
+11: 3:30
+12: 4:00
+13: 4:30
+14: 5:00
+15: Longer than 5 min
+"""
+
+def length_secs_to_enum(length_secs):
+    if length_secs <= 120:
+        return round(length_secs / 15)
+    if length_secs <= 300:
+        return 8 + round((length_secs - 120) / 30)
+    return 15
+
+
+def tmx_date_to_ts(date_str: str):
+    # "2020-10-26T20:11:55.657"
+    frac = "000"
+    if (date_str[19] == "."):
+        frac = date_str[20:]
+        date_str = date_str[:19]
+    return datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S").timestamp() + float(frac)/1000
 
 
 class MapJustID(BaseModel):
@@ -10,26 +47,42 @@ class MapJustID(BaseModel):
 
 class Map(Document):
     TrackID: Indexed(int, unique=True)
-    Name: str
-    GbxMapName: str
+    UserID: Indexed(int)
+    Username: Indexed(str)
+    AuthorLogin: Indexed(str)
+    Name: Indexed(str)
+    GbxMapName: Indexed(str)
     TrackUID: str
-    ExeVersion: str
-    ExeBuild: str
+    TitlePack: Indexed(str)
+    ExeVersion: Indexed(str)
+    ExeBuild: Indexed(str)
+    Mood: str
+    ModName: str | None
     AuthorTime: int
+    ParserVersion: int
     UploadedAt: str
     UpdatedAt: str
+    UploadTimestamp: float
+    UpdateTimestamp: float
     Tags: str | None
     TypeName: str
-    StyleName: str | None
+    StyleName: Indexed(str) | None
     RouteName: str
     LengthName: str
     LengthSecs: Indexed(int)
+    LengthEnum: int
     DifficultyName: str
     Laps: int
     Comments: str
     Downloadable: bool
+    Unlisted: bool
+    Unreleased: bool
     RatingVoteCount: int
     RatingVoteAverage: float
+    VehicleName: str
+    EnvironmentName: str
+    HasScreenshot: bool
+    HasThumbnail: bool
 
     # class Settings:
     #     indexes = [
@@ -56,4 +109,7 @@ class Map(Document):
                 LengthSecs = int(LengthName.split(" secs")[0])
             else:
                 raise Exception(f"Unknown LengthName format; {LengthName}")
+        kwargs['LengthEnum'] = length_secs_to_enum(LengthSecs)
+        kwargs['UploadTimestamp'] = tmx_date_to_ts(kwargs['UploadedAt'])
+        kwargs['UpdateTimestamp'] = tmx_date_to_ts(kwargs['UpdatedAt'])
         super().__init__(*args, LengthSecs=LengthSecs, LengthName=LengthName, **kwargs)

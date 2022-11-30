@@ -33,16 +33,22 @@ all_clients: set["Client"] = set()
 all_lobbies: dict[str, "Lobby"] = dict()
 
 class Message(Document):
-    type: Indexed(str)
+    type: str
     payload: dict
-    visibility: Indexed(str) = "global"
+    visibility: str = "global"
     user: Optional[Link[User]]
     ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=time.time)
+
+    class Settings:
+        indexes = ["type", "visibility"]
 
     def __getitem__(self, key):
         return self.payload[key]
     def __setitem__(self, key, value):
         self.payload[key] = value
+
+    def save_via_task(self):
+        asyncio.create_task(self.save())
 
     @property
     def safe_json(self):
@@ -159,6 +165,9 @@ class GameSession(HasAdminsModel):
             players=[p.safe_json for p in self.players],
             n_game_msgs=len(self.game_msgs),
             teams=self.teams,
+            map_list=[m.TrackID for m in self.map_list],
+            room=self.room,
+            lobby=self.lobby,
         )
 
     @property
@@ -663,6 +672,8 @@ class GameController(HasChats):
     model: GameSession
     room: RoomController
     container_type: Literal["lobby", "room", "game"] = "game"
+    teams: list[list["Client"]]
+    track_id_to_players: dict[int, list["Client"]]
 
     @property
     def to_full_game_info_json(self):
@@ -677,6 +688,7 @@ class GameController(HasChats):
         self.room = room_inst
         super().__init__()
         self.persist_model()
+        self.teams = list(list() for _ in range(len(self.model.teams)))
 
     async def handoff(self, client: "Client"):
         if client.user in self.model.kicked_players:
@@ -698,7 +710,7 @@ class GameController(HasChats):
         client.set_scope(f"3|{self.name}")
 
     async def game_info_loop(self, client: "Client"):
-        client.write_message("GAME_FULL_INFO", self.to_full_game_info_json)
+        client.write_message("GAME_INFO_FULL", self.to_full_game_info_json)
         while client in self.clients and not client.disconnected:
             client.write_message("GAME_INFO", self.to_inprog_game_info_json)
             await asyncio.sleep(5.0)
@@ -716,6 +728,7 @@ class GameController(HasChats):
         self.send_admin_mod_status(client)
         self.tell_player_list(client)
         self.clients.add(client)
+        self.assign_player_to_team(client)
         self.broadcast_player_joined(client)
         self.replay_game_so_far(client)
 
@@ -727,6 +740,14 @@ class GameController(HasChats):
         for msg in self.model.game_msgs:
             client.write_json(msg.safe_json)
 
+    def assign_player_to_team(self, client: "Client"):
+        uid = client.user.uid
+        for team_i, team in enumerate(self.model.teams):
+            if uid in team:
+                self.teams[team_i].append(client)
+                return
+        log.warn(f"Game cannot assign player to team: {client.user.name} / {uid}")
+
     async def run_client(self, client: "Client"):
         while True:
             msg = await client.read_valid()
@@ -736,10 +757,72 @@ class GameController(HasChats):
             if await self.process_msg(client, msg) == "LEAVE":
                 break
 
+    map_msg_types = {"CP_TIME", "FINAL_TIME", "ENTER_MAP", "LEAVE_MAP"}
+    vote_msg_types = {"MAP_REROLL_VOTE_START", "MAP_REROLL_VOTE_SUBMIT", "MOD_MAP_REROLL"}
+
     async def process_msg(self, client: "Client", msg: Message):
         if await self.process_admin_msg(client, msg) == "LEAVE": return "LEAVE"
         await self.process_chat_msg(client, msg)
         if msg.type == "LEAVE": return "LEAVE"
+
+        # note: if streaming data is added (car pos or mouse pos), it should not be cached
+
+        is_game_msg = True
+        if msg.type.startswith("G_"): await self.on_game_msg(self, client, msg)
+        elif msg.type in self.map_msg_types: await self.on_map_msg(self, client, msg)
+        elif msg.type in self.vote_msg_types: await self.on_map_vote_msg(self, client, msg)
+        else: is_game_msg = False
+        if is_game_msg:
+            self.model.game_msgs.append(msg)
+            self.persist_model()
+
+    async def on_game_msg(self, client: "Client", msg: Message):
+        # todo: visibility stuff
+        self.broadcast_game_msg(msg)
+
+    def broadcast_game_msg(self, msg: Message):
+        msg.payload['seq'] = len(self.model.game_msgs)
+        msg.save_via_task()
+        self.persist_model
+        return self.broadcast_msg(msg)
+
+    async def on_map_msg(self, client: "Client", msg: Message):
+        if msg.type == "LEAVE_MAP": return await self.on_map_leave(client, msg)
+        if msg.type == "ENTER_MAP": return await self.on_map_enter(client, msg)
+        if msg.type == "FINAL_TIME": return await self.on_map_finish(client, msg)
+        if msg.type == "CP_TIME": return await self.on_map_cp(client, msg)
+        else: log.warning(f"Unknown map msg: {msg.type}")
+
+    async def on_map_leave(self, client: "Client", msg: Message):
+        pass
+
+    async def on_map_enter(self, client: "Client", msg: Message):
+        pass
+
+    async def on_map_finish(self, client: "Client", msg: Message):
+        pass
+
+    async def on_map_cp(self, client: "Client", msg: Message):
+        pass
+
+    async def on_map_vote_msg(self, client: "Client", msg: Message):
+        # todo
+        if msg.type == "MOD_MAP_REROLL": return await self.on_map_mod_reroll(client, msg)
+        elif msg.type == "MAP_REROLL_VOTE_START": return await self.on_map_reroll_start(client, msg)
+        elif msg.type == "MAP_REROLL_VOTE_SUBMIT": return await self.on_map_reroll_vote_submit(client, msg)
+        else: log.warning(f"Unknown map vote msg: {msg.type}")
+
+    @HasAdmins.mod_only
+    async def on_map_mod_reroll(self, client: "Client", msg: Message):
+        pass
+
+    async def on_map_reroll_start(self, client: "Client", msg: Message):
+        pass
+
+    async def on_map_reroll_vote_submit(self, client: "Client", msg: Message):
+        pass
+
+
 
 class Client:
     reader: asyncio.StreamReader
@@ -823,7 +906,8 @@ class Client:
         msg = await self.read_json()
         if msg is None: return None
         msg = self.validate_pl(msg)
-        await msg.insert()
+        if msg.type != "LOGIN":
+            await msg.insert()
         return msg
 
     def write_raw(self, msg: str):

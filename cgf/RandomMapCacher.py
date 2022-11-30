@@ -108,6 +108,7 @@ async def _download_and_cache_map(track_id: int, retry_times=10):
                         )
                     )
                     logging.info(f"Uploaded map to s3 cache: {map_file}")
+                    cached_maps.add(track_id)
     except Exception as e:
         if retry_times <= 0:
             raise e
@@ -144,7 +145,16 @@ async def _add_a_specific_map(track_id: int):
             if resp.status == 200:
                 await _add_maps_from_json(dict(results=[await resp.json()]))
             else:
-                logging.warning(f"Could not get random map: {resp.status} code")
+                logging.warning(f"Could not get specific map (TID:{track_id}): {resp.status} code")
+
+async def _add_latest_maps():
+    async with get_session() as session:
+        async with session.get("https://trackmania.exchange/mapsearch2/search?api=on") as resp:
+            if resp.status == 200:
+                await _add_maps_from_json(await resp.json())
+            else:
+                logging.warning(f"Could not get latest maps: {resp.status} code")
+
 
 async def _add_maps_from_json(j: dict):
     if 'results' not in j:
@@ -160,7 +170,7 @@ async def _add_maps_from_json(j: dict):
         _map = Map(**map_j)
         if not _map.Downloadable:
             continue
-        if track_id in known_maps:
+        if track_id in known_maps or await Map.find_many(Eq(Map.TrackID, track_id)).count() > 0:
             _map = await Map.find_one(Eq(Map.TrackID, track_id))
         else:
             await _map.save()  # using insert_many later doesn't populate .id

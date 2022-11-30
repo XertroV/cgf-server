@@ -93,21 +93,21 @@ async def main():
 
     with timeit_context("Load known maps"):
         await RMC.init_known_maps()
+
+    with timeit_context("Get latest maps from TMX"):
+        await RMC._add_latest_maps()
+
     asyncio.create_task(RMC.maintain_random_maps())
 
-    log.info(f"Loaded {count_rooms} total with {count_games} games")
+    log.info(f"Loaded {count_rooms} total rooms with {count_games} total games")
 
 
     MAIN_INIT_DONE = True
 
     # start socket server and run forever
     server = await asyncio.start_server(connection_cb, HOST_NAME, TCP_PORT)
-    # server_task = asyncio.create_task(server.serve_forever())
     async with server:
         await server.serve_forever()
-
-    # while True:
-    #     await asyncio.sleep(0.1)
 
 
 async def connection_cb(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):

@@ -1,5 +1,6 @@
 
 import time
+from typing import Iterable
 from contextlib import contextmanager
 import logging as log
 
@@ -14,3 +15,8 @@ def timeit_context(name):
 
 def clamp(n, _min, _max):
     return max(_min, min(_max, n))
+
+
+def chunk(iter: Iterable, n: int):
+    for i in range(0, len(iter), n):
+        yield iter[i:(i+n)]

@@ -9,6 +9,7 @@ import aiohttp
 from beanie.operators import In, Eq
 
 from cgf.consts import SERVER_VERSION
+from cgf.utils import chunk
 from cgf.http import get_session
 from cgf.models.Map import LONG_MAP_SECS, Map, MapJustID
 from cgf.db import s3, s3_bucket_name, s3_client
@@ -36,11 +37,10 @@ async def ensure_known_maps_cached():
         logging.info(f"Getting uncached: {track_id}")
         asyncio.create_task(cache_map(track_id))
     max_map_id = 81192 if len(_known_maps) == 0 else max(_known_maps)
-    other_map_ids = set(range(0, max_map_id)) - cached_maps
+    other_map_ids = list(set(range(0, max_map_id)) - cached_maps)
     # slowly get all the other maps proactively
-    for track_id in other_map_ids:
-        # await add_map_to_db_via_id(track_id)
-        await cache_map(track_id)
+    for tids in chunk(other_map_ids, 3):
+        await asyncio.wait(map(cache_map, tids))
 
 def _get_bucket_keys() -> set[int]:
     cached_maps = set()

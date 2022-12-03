@@ -144,7 +144,7 @@ async def add_more_random_maps(n: int):
 
 async def _add_a_random_map():
     async with get_session() as session:
-        async with session.get(f"https://trackmania.exchange/mapsearch2/search?api=on&random=1", timeout=3.0) as resp:
+        async with session.get(f"https://trackmania.exchange/mapsearch2/search?api=on&random=1", timeout=5.0) as resp:
             if resp.status == 200:
                 await _add_maps_from_json(await resp.json())
             else:

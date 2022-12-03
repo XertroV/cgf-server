@@ -749,7 +749,7 @@ class GameController(HasChats):
         client.write_message("GAME_INFO_FULL", self.to_full_game_info_json)
 
     def send_maps_info_full(self, client: "Client"):
-        client.write_message("MAPS_INFO_FULL", dict(maps=list(m.safe_json for m in self.room.map_list)))
+        client.write_message("MAPS_INFO_FULL", dict(maps=list(m.safe_json_shorter for m in self.room.map_list)))
 
     def on_client_handed_off(self, client: "Client"):
         self.broadcast_player_left(client)

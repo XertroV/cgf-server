@@ -119,5 +119,13 @@ class Map(Document):
         super().__init__(*args, LengthSecs=LengthSecs, LengthName=LengthName, **kwargs)
 
     @property
-    def safe_json(self):
+    def safe_json(self) -> dict:
         return json.loads(self.json())
+
+    @property
+    def safe_json_shorter(self):
+        d = dict()
+        fields = ['TrackID', 'Name', 'AuthorTime', 'Tags', 'TypeName', 'StyleName', 'LengthName', 'LengthSecs', 'LengthEnum', 'DifficultyName', 'HasThumbnail']
+        for f in fields:
+            d[f] = self.__getattribute__(f)
+        return d

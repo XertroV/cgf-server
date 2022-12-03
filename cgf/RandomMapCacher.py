@@ -153,7 +153,7 @@ async def _add_a_random_map():
                 new_maps = []
                 for _ in range(20):
                     new_maps.append(random.choice(maps))
-                maps = await Map.find_many(In(Map.TrackID, new_maps))
+                maps = await Map.find_many(In(Map.TrackID, new_maps)).to_list()
                 fresh_random_maps.extend(maps)
 
 async def _add_a_specific_map(track_id: int):

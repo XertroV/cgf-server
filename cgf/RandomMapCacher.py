@@ -8,7 +8,7 @@ import botocore
 import aiohttp
 from beanie.operators import In, Eq
 
-from cgf.consts import SERVER_VERSION
+from cgf.consts import LOCAL_DEV_MODE, SERVER_VERSION, SHUTDOWN, SHUTDOWN_EVT
 from cgf.utils import chunk
 from cgf.http import get_session
 from cgf.models.Map import LONG_MAP_SECS, Map, MapJustID
@@ -25,22 +25,30 @@ async def init_known_maps():
     _maps = await Map.find_all(projection_model=MapJustID).to_list()
     known_maps.update([m.TrackID for m in _maps])
     logging.info(f"Known maps: {len(known_maps)}")
-    asyncio.create_task(ensure_known_maps_cached())
+    # todo: re-enable when not developing
+    if not LOCAL_DEV_MODE:
+        asyncio.create_task(ensure_known_maps_cached())
 
 async def ensure_known_maps_cached():
-    _known_maps = set(known_maps)
-    cached_maps.update(await asyncio.get_event_loop().run_in_executor(None, _get_bucket_keys))
-    uncached = _known_maps - cached_maps
-    logging.info(f"Getting {len(uncached)} uncached but known maps")
-    for i, track_id in enumerate(uncached):
-        await asyncio.sleep(0.300) # sleep 300 ms between checks
-        logging.info(f"Getting uncached: {track_id}")
-        asyncio.create_task(cache_map(track_id))
-    max_map_id = 81192 if len(_known_maps) == 0 else max(_known_maps)
-    other_map_ids = list(set(range(0, max_map_id)) - cached_maps)
-    # slowly get all the other maps proactively
-    for tids in chunk(other_map_ids, 3):
-        await asyncio.wait(map(cache_map, tids))
+    while not SHUTDOWN:
+        _known_maps = set(known_maps)
+        cached_maps.update(await asyncio.get_event_loop().run_in_executor(None, _get_bucket_keys))
+        uncached = _known_maps - cached_maps
+        logging.info(f"Getting {len(uncached)} uncached but known maps")
+        for i, track_id in enumerate(uncached):
+            await asyncio.sleep(0.300) # sleep 300 ms between checks
+            logging.info(f"Getting uncached: {track_id}")
+            asyncio.create_task(cache_map(track_id))
+        max_map_id = 81192 if len(_known_maps) == 0 else max(_known_maps)
+        other_map_ids = list(set(range(0, max_map_id)) - cached_maps)
+        # slowly get all the other maps proactively
+        logging.info(f"Caching {len(other_map_ids)} uncached maps")
+        for tids in chunk(other_map_ids, 3):
+            await asyncio.wait(map(cache_map, tids))
+        waiting_secs = 60 * 60  # an hour
+        for _ in range(waiting_secs * 10):
+            await asyncio.sleep(0.1)
+            if SHUTDOWN: break
 
 def _get_bucket_keys() -> set[int]:
     cached_maps = set()
@@ -48,6 +56,7 @@ def _get_bucket_keys() -> set[int]:
     nb_in_avg = 0
     bucket = s3.Bucket(s3_bucket_name)
     for k in bucket.objects.all():
+        if SHUTDOWN_EVT.is_set(): break
         try:
             cached_maps.add(int(k.key.split('.Map.Gbx')[0]))
             avg_size = (avg_size * nb_in_avg + k.size) / (nb_in_avg + 1)
@@ -147,16 +156,16 @@ async def _add_a_specific_map(track_id: int):
             else:
                 logging.warning(f"Could not get specific map (TID:{track_id}): {resp.status} code")
 
-async def _add_latest_maps():
+async def add_latest_maps():
     async with get_session() as session:
         async with session.get("https://trackmania.exchange/mapsearch2/search?api=on") as resp:
             if resp.status == 200:
-                await _add_maps_from_json(await resp.json())
+                await _add_maps_from_json(await resp.json(), False)
             else:
                 logging.warning(f"Could not get latest maps: {resp.status} code")
 
 
-async def _add_maps_from_json(j: dict):
+async def _add_maps_from_json(j: dict, add_to_random_maps = True):
     if 'results' not in j:
         logging.warning(f"Response didn't contain .results")
         return
@@ -170,21 +179,20 @@ async def _add_maps_from_json(j: dict):
         _map = Map(**map_j)
         if not _map.Downloadable:
             continue
-        if track_id in known_maps or await Map.find_many(Eq(Map.TrackID, track_id)).count() > 0:
-            _map = await Map.find_one(Eq(Map.TrackID, track_id))
+        map_in_db = await Map.find_one(Eq(Map.TrackID, track_id))
+        if map_in_db is not None:
+            # todo: check for update?
+            _map = map_in_db
         else:
             await _map.save()  # using insert_many later doesn't populate .id
-        fresh_random_maps.append(_map)
+        if add_to_random_maps:
+            fresh_random_maps.append(_map)
         maps_to_cache.append(_map)
         added_c += 1
         if track_id in known_maps:
             continue
         map_docs.append(_map)
         known_maps.add(track_id)
-    # logging.info(f"Added {len(maps_j)} fresh random maps")
-    # logging.info(f"Inserting {len(map_docs)} maps to DB")
-    # if len(map_docs) == 0: return
-    # await Map.insert_many(map_docs)
     for i, tid in enumerate(track_ids):
         asyncio.create_task(cache_map(tid, delay_ms=i*100))
 

@@ -7,11 +7,12 @@ import time
 import traceback
 import signal
 import urllib3
+import threading
 
 from cgf.Client import Client, ChatMessages, Lobby, LobbyModel, Message, Room, GameSession, get_main_lobby, all_clients, populate_all_lobbies, all_lobbies, all_users
 import cgf.RandomMapCacher as RMC
 from cgf.User import User
-from cgf.consts import SERVER_VERSION
+from cgf.consts import SERVER_VERSION, SHUTDOWN, SHUTDOWN_EVT
 from cgf.models.Map import Map
 from cgf.users import all_users
 from cgf.db import db
@@ -37,8 +38,10 @@ TCP_PORT = int(os.environ.get("CGF_PORT", "15277"))
 
 loop = asyncio.new_event_loop()
 
-
 def cleanup_clients(*args):
+    global SHUTDOWN, SHUTDOWN_EVT
+    SHUTDOWN = True
+    SHUTDOWN_EVT.set()
     _clients = list(all_clients)
     for client in _clients:
         log.info(f"Disconnecting client: {client.client_ip}")
@@ -95,7 +98,7 @@ async def main():
         await RMC.init_known_maps()
 
     with timeit_context("Get latest maps from TMX"):
-        await RMC._add_latest_maps()
+        await RMC.add_latest_maps()
 
     asyncio.create_task(RMC.maintain_random_maps())
 

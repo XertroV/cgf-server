@@ -1,3 +1,4 @@
+import asyncio
 from logging import warning
 import time
 
@@ -15,6 +16,7 @@ class User(Document):
     registration_ts: Indexed(float, unique=True) = Field(default_factory=lambda: time.time())
     n_logins: int = 0
     last_seen: Indexed(float, pymongo.DESCENDING) = 0
+    last_scope: str = ""
 
     class Settings:
         use_state_management = True
@@ -32,3 +34,12 @@ class User(Document):
         d = self.safe_json
         d.update(dict(secret=self.secret))
         return d
+
+    # updated every time the user changes scopes -- facilitate rejoining
+    def set_last_scope(self, scope: str):
+        self.last_scope = scope
+        self.persist()
+        print(f"User: {self.name} set scope: {scope}")
+
+    def persist(self):
+        asyncio.create_task(self.save_changes())

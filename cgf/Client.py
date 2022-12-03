@@ -130,10 +130,12 @@ class Room(HasAdminsModel):
             n_maps=self.maps_required,
             min_secs=self.min_secs,
             max_secs=self.max_secs,
+            game_start_time=self.game_start_time,
         )
 
 
 class GameSession(HasAdminsModel):
+    name: Indexed(str, unique=True) = Field(default_factory=lambda: gen_uid(10))
     players: list[Link[User]]
     game_msgs: list[Link[Message]] = Field(default_factory=list)
     room: str
@@ -434,8 +436,10 @@ class RoomController(HasChats):
             # GTE(GameSession.creation_ts, time.time() - (3600 * 6)), # within last 6 hrs
             Eq(GameSession.room, self.name),
             Eq(GameSession.lobby, self.lobby_inst.name),
-            fetch_links=True)
+            with_children=True, fetch_links=True
+        )
         if game_model is not None:
+            # await game_model.fetch_all_links()
             game = GameController(game_model, room_inst=self)
             self.game = game
         self.loaded_game = True
@@ -443,13 +447,13 @@ class RoomController(HasChats):
     async def load_maps(self):
         maps_needed = self.model.maps_required - len(self.model.map_list)
         if maps_needed > 0:
-            log.debug(f"Room asking for {maps_needed} maps.")
+            # log.debug(f"Room asking for {maps_needed} maps.")
             async for m in RMC.get_some_maps(maps_needed):
-                log.debug(f"Got map: {m.json()}")
+                # log.debug(f"Got map: {m.json()}")
                 if (m.id is None):
                     await m.save()
                 self.model.map_list.append(m)
-        self.persist_model()
+            self.persist_model()
         self.loaded_maps = True
 
     @property
@@ -477,8 +481,8 @@ class RoomController(HasChats):
     def is_open(self):
         return self.model.is_open
 
-    async def handoff(self, client: "Client"):
-        # todo: does this work?
+    async def handoff(self, client: "Client", game_name: str = None):
+        # todo: does kicked players work?
         if client.user in self.model.kicked_players:
             client.tell_error(f"You can't join again because you were already kicked.")
             return
@@ -489,9 +493,12 @@ class RoomController(HasChats):
         if len(self.clients) >= self.model.player_limit:
             client.tell_info(f"Sorry, the room is full.")
             return
+        # todo if game has started
         self.on_client_entered(client)
         await self.initialized()
         try:
+            if game_name is not None:
+                await self.on_join_game_now(client, None)
             await self.run_client(client)
         except Exception as e:
             warning(f"[{client.client_ip}] Disconnecting: Exception during Room.run_client: {e}\n{''.join(traceback.format_exception(e))}")
@@ -638,9 +645,9 @@ class RoomController(HasChats):
         msg_j = dict(type="GAME_STARTING_AT", payload={'start_time': start_time, 'wait_time': wait_time})
         self.broadcast_json(msg_j)
 
-    async def on_join_game_now(self, client: "Client", msg: Message):
+    async def on_join_game_now(self, client: "Client", *args):
         game_started = self.has_game_started()
-        if not self.has_game_started():
+        if not game_started:
             time_left = abs(self.model.game_start_time - time.time())
             if time_left < 1.0:
                 await asyncio.sleep(time_left + 0.05)
@@ -650,10 +657,9 @@ class RoomController(HasChats):
             game_started = self.has_game_started()
         # only true if abort happened during above
         if not game_started: return
-        # game has started, so hand off to game lobby
+        # this awaits loading our maps if they're not already loaded
+        await self.initialized()
         if self.game is None:
-            # this awaits loading our maps if they're not already loaded
-            await self.initialized()
             game_model = GameSession(
                 players=[c.user for c in self.clients],
                 room=self.name,
@@ -662,6 +668,11 @@ class RoomController(HasChats):
                 map_list=self.model.map_list,
             )
             self.game = GameController(game_model, self)
+            await game_model.save()
+        # game has started, so hand off to game lobby
+        await self.handoff_to_game(client)
+
+    async def handoff_to_game(self, client: "Client"):
         self.on_client_handed_off(client)
         await self.game.handoff(client)
         self.on_client_entered(client)
@@ -683,11 +694,14 @@ class GameController(HasChats):
     def to_inprog_game_info_json(self):
         return self.model.to_inprog_game_info_json
 
+    @property
+    def name(self):
+        return self.model.name
+
     def __init__(self, model: GameSession | None, room_inst: RoomController):
         self.model = model
         self.room = room_inst
         super().__init__()
-        self.persist_model()
         self.teams = list(list() for _ in range(len(self.model.teams)))
 
     async def handoff(self, client: "Client"):
@@ -768,9 +782,9 @@ class GameController(HasChats):
         # note: if streaming data is added (car pos or mouse pos), it should not be cached
 
         is_game_msg = True
-        if msg.type.startswith("G_"): await self.on_game_msg(self, client, msg)
-        elif msg.type in self.map_msg_types: await self.on_map_msg(self, client, msg)
-        elif msg.type in self.vote_msg_types: await self.on_map_vote_msg(self, client, msg)
+        if msg.type.startswith("G_"): await self.on_game_msg(client, msg)
+        elif msg.type in self.map_msg_types: await self.on_map_msg(client, msg)
+        elif msg.type in self.vote_msg_types: await self.on_map_vote_msg(client, msg)
         else: is_game_msg = False
         if is_game_msg:
             self.model.game_msgs.append(msg)
@@ -783,7 +797,7 @@ class GameController(HasChats):
     def broadcast_game_msg(self, msg: Message):
         msg.payload['seq'] = len(self.model.game_msgs)
         msg.save_via_task()
-        self.persist_model
+        self.persist_model()
         return self.broadcast_msg(msg)
 
     async def on_map_msg(self, client: "Client", msg: Message):
@@ -830,6 +844,7 @@ class Client:
     uid: str
     user: User
     lobby: "Lobby"
+    disconnected: bool = False
 
     def __init__(self, reader, writer) -> None:
         self.reader = reader
@@ -925,7 +940,9 @@ class Client:
         return self.write_json(dict(type=type, payload=payload, **kwargs))
 
     def set_scope(self, scope: str):
+        if self.disconnected: return
         self.write_json({"scope": scope})
+        self.user.set_last_scope(scope)
 
     async def main_loop(self):
         try:
@@ -939,7 +956,30 @@ class Client:
         if self.user is None:
             warn(f"Failed to init for {self.client_ip} -- bailing")
         else:
-            await self.lobby.handoff(self)
+            # rejoin
+            lobby_name = None
+            room_name = None
+            game_name = None
+            if len(self.user.last_scope) >= 3 and self.user.last_seen > (time.time() - (60 * 60 * 3)):
+                scope_type = int(self.user.last_scope[:1])
+                scope_name = self.user.last_scope[2:]
+                log.info(f"Rejoining user {self.user.name} to scope: {self.user.last_scope}")
+                if scope_type == 0:
+                    pass # main lobby
+                elif scope_type == 1:
+                    lobby_name = scope_name
+                elif scope_type == 2:
+                    room_name = scope_name
+                    _r = await Room.find_one(Room.name == scope_name)
+                    lobby_name = _r.lobby
+                elif scope_type == 3:
+                    game_name = scope_name
+                    _g = await GameSession.find_one(GameSession.name == scope_name)
+                    lobby_name = _g.lobby
+                    room_name = _g.room
+                else:
+                    log.warning(f"Unknown scope type: {scope_type} from last_scope: {self.user.last_scope}")
+            await self.lobby.handoff(self, lobby_name, room_name, game_name)
         self.disconnect()
 
     async def init_client(self):
@@ -1076,7 +1116,7 @@ class Lobby(HasChats):
 
     # HANDOFF
 
-    async def handoff(self, client: Client):
+    async def handoff(self, client: Client, lobby_name: str = None, room_name: str = None, game_name: str = None):
         if client in self.clients:
             warn(f"I already have client: {client}")
             client.tell_warning("Tried to join lobby twice. This is probably a server bug.")
@@ -1087,6 +1127,11 @@ class Lobby(HasChats):
         # self.tell_client_curr_scope(client)
         info(f"Running client: {client.client_ip}")
         try:
+            if lobby_name is not None and lobby_name != self.name:
+                await self.handoff_to_game_lobby(client, await get_named_lobby(lobby_name), room_name=room_name, game_name=game_name)
+            else:
+                if room_name is not None and room_name in self.rooms:
+                    await self.handoff_to_room(client, self.rooms[room_name], game_name=game_name)
             await self.run_client(client)
         except Exception as e:
             warning(f"[{client.client_ip}] Disconnecting: Exception during run_client: {e}\n{''.join(traceback.format_exception(e))}")
@@ -1127,18 +1172,18 @@ class Lobby(HasChats):
         if client in all_clients:
             all_clients.remove(client)
 
-    async def handoff_to_game_lobby(self, client: Client, dest: "Lobby"):
+    async def handoff_to_game_lobby(self, client: Client, dest: "Lobby", *args, **kwargs):
         if self.model.parent_lobby is None:
             self.on_client_handed_off(client)
-            await dest.handoff(client)
+            await dest.handoff(client, *args, **kwargs)
             self.on_client_entered(client)
         else:
             client.tell_warning("Can only hand off to game lobby from the main lobby")
 
-    async def handoff_to_room(self, client: Client, room: "RoomController"):
+    async def handoff_to_room(self, client: Client, room: "RoomController", *args, **kwargs):
         if self.model.parent_lobby is not None or True:
             self.on_client_handed_off(client)
-            await room.handoff(client)
+            await room.handoff(client, *args, **kwargs)
             self.on_client_entered(client)
         else:
             client.tell_warning("Can only hand off to room from a game lobby")

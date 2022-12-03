@@ -38,7 +38,7 @@ def length_secs_to_enum(length_secs):
 def tmx_date_to_ts(date_str: str):
     # "2020-10-26T20:11:55.657"
     frac = "000"
-    if len(date_str) >= 19 and date_str[19] == ".":
+    if len(date_str) > 19 and date_str[19] == ".":
         frac = date_str[20:]
         date_str = date_str[:19]
     else:

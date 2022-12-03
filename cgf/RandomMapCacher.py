@@ -19,7 +19,7 @@ maps_to_cache: list[Map] = list()
 known_maps: set[int] = set()
 cached_maps: set[int] = set()
 
-MAINTAIN_N_MAPS = 5  #200
+MAINTAIN_N_MAPS = 20  #200
 
 async def init_known_maps():
     _maps = await Map.find_all(projection_model=MapJustID).to_list()
@@ -118,6 +118,8 @@ async def _download_and_cache_map(track_id: int, retry_times=10):
                     )
                     logging.info(f"Uploaded map to s3 cache: {map_file}")
                     cached_maps.add(track_id)
+                else:
+                    logging.warn(f"Could not get map {track_id}, code: {resp.status}")
     except Exception as e:
         if retry_times <= 0:
             raise e
@@ -142,11 +144,17 @@ async def add_more_random_maps(n: int):
 
 async def _add_a_random_map():
     async with get_session() as session:
-        async with session.get(f"https://trackmania.exchange/mapsearch2/search?api=on&random=1") as resp:
+        async with session.get(f"https://trackmania.exchange/mapsearch2/search?api=on&random=1", timeout=3.0) as resp:
             if resp.status == 200:
                 await _add_maps_from_json(await resp.json())
             else:
-                logging.warning(f"Could not get random map: {resp.status} code")
+                logging.warning(f"Could not get random map: {resp.status} code. TMX might be down. Adding some random maps from the DB.")
+                maps = await Map.find_all(projection_model=MapJustID).to_list()
+                new_maps = []
+                for _ in range(20):
+                    new_maps.append(random.choice(maps))
+                maps = await Map.find_many(In(Map.TrackID, new_maps))
+                fresh_random_maps.extend(maps)
 
 async def _add_a_specific_map(track_id: int):
     async with get_session() as session:

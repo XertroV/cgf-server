@@ -82,15 +82,20 @@ PLAYER_JOINED, etc
 
 ### from server
 
-|n| 3 | GAME_INFO_FULL | `{}` ||
-|n| 3 | GAME_INFO | `{}` ||
 |y| 3 | ADMIN_MOD_STATUS | `{admins: str[], mods: str[]}` | note: lists of user UIDs |
 
-|n| 3 | MAP_LIST_UPDATE | `{}` ||
-|n| 3 | MAP_REROLL_VOTE_RESULT | `{}` ||
-|n| 3 | MAP_REROLL_VOTE_INITIATED | `{}` ||
+|y| 3 | GAME_INFO_FULL | `{players: User[], n_game_msgs: uint, teams: string[][], team_order: int[], map_list: int[], room: string, lobby: string}` ||
+|n| 3 | GAME_INFO | `{}` ||
+|y| 3 | GAME_REPLAY_START | `{n_msgs: int}` | on rejoin, this is sent immediately before events are replayed |
+|y| 3 | GAME_REPLAY_END | `{}` | on rejoin, this is sent immediately once events have been replayed |
 
-|n| 3 | G_xxxxxxxx | `any & {seq: int}` | broadcasted game messages from other clients; can be scoped via visibility. seq is the sequence number. |
+|n| 3 | MAPS_INFO_FULL | `{maps: Map[]}` | `Map` is according to TMX schema |
+
+|n| 3 | MAP_LIST_UPDATE | `{}` | if something in the map list is updated e.g., due to reroll |
+|n| 3 | MAP_REROLL_VOTE_RESULT | `{}` | result of a vote to reroll a map |
+|n| 3 | MAP_REROLL_VOTE_INITIATED | `{}` | sent when a vote to reroll starts |
+
+|n| 3 | G_xxxxxxxx | `any & {payload: {seq: int}}` | broadcasted game messages from other clients; can be scoped via visibility. seq is the sequence number. |
 
 ### to server
 

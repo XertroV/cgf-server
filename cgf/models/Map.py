@@ -1,4 +1,5 @@
 import datetime
+import json
 import logging
 
 from pydantic import Field, BaseModel
@@ -116,3 +117,7 @@ class Map(Document):
         kwargs['UploadTimestamp'] = tmx_date_to_ts(kwargs['UploadedAt'])
         kwargs['UpdateTimestamp'] = tmx_date_to_ts(kwargs['UpdatedAt'])
         super().__init__(*args, LengthSecs=LengthSecs, LengthName=LengthName, **kwargs)
+
+    @property
+    def safe_json(self):
+        return json.loads(self.json())

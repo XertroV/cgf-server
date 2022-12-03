@@ -2,6 +2,7 @@ import asyncio
 import json
 from logging import debug, warn, warning
 import os
+import random
 import struct
 import traceback
 from typing import Any, Literal, Optional, Union
@@ -142,9 +143,9 @@ class GameSession(HasAdminsModel):
     lobby: str
     # list of player UIDs
     teams: list[list[str]]
+    team_order: list[int] = Field(default_factory=list)
     map_list: list[Link[Map]]
     creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
-
     class Settings:
         use_state_management = True
         name = "Game"
@@ -160,17 +161,22 @@ class GameSession(HasAdminsModel):
             ),
         ]
 
-
     @property
     def to_full_game_info_json(self):
-        return dict(
+        if self.team_order is None or len(self.team_order) == 0:
+            self.team_order = list(range(len(self.teams)))
+            random.shuffle(self.team_order)
+        ret = dict(
             players=[p.safe_json for p in self.players],
             n_game_msgs=len(self.game_msgs),
             teams=self.teams,
+            team_order=self.team_order,
             map_list=[m.TrackID for m in self.map_list],
             room=self.room,
             lobby=self.lobby,
         )
+        print(ret)
+        return ret
 
     @property
     def to_inprog_game_info_json(self):
@@ -435,11 +441,12 @@ class RoomController(HasChats):
         game_model = await GameSession.find_one(
             # GTE(GameSession.creation_ts, time.time() - (3600 * 6)), # within last 6 hrs
             Eq(GameSession.room, self.name),
-            Eq(GameSession.lobby, self.lobby_inst.name),
-            with_children=True, fetch_links=True
+            Eq(GameSession.lobby, self.lobby_inst.name)
         )
         if game_model is not None:
-            # await game_model.fetch_all_links()
+            await game_model.fetch_all_links()
+            for msg in game_model.game_msgs:
+                asyncio.create_task(msg.fetch_all_links())
             game = GameController(game_model, room_inst=self)
             self.game = game
         self.loaded_game = True
@@ -448,7 +455,7 @@ class RoomController(HasChats):
         maps_needed = self.model.maps_required - len(self.model.map_list)
         if maps_needed > 0:
             # log.debug(f"Room asking for {maps_needed} maps.")
-            async for m in RMC.get_some_maps(maps_needed):
+            async for m in RMC.get_some_maps(maps_needed, self.model.min_secs, self.model.max_secs):
                 # log.debug(f"Got map: {m.json()}")
                 if (m.id is None):
                     await m.save()
@@ -458,6 +465,9 @@ class RoomController(HasChats):
 
     @property
     def name(self): return self.model.name
+
+    @property
+    def map_list(self): return self.model.map_list
 
     @property
     def to_created_room_json(self):
@@ -511,10 +521,13 @@ class RoomController(HasChats):
 
     async def room_info_loop(self, client: "Client"):
         while client in self.clients and not client.disconnected:
-            client.write_message("ROOM_INFO", self.to_created_room_json)
+            self.send_room_info(client)
             self.tell_player_list(client)
             self.on_list_teams(client)
             await asyncio.sleep(5.0)
+
+    def send_room_info(self, client: "Client"):
+        client.write_message("ROOM_INFO", self.to_created_room_json)
 
     def on_client_handed_off(self, client: "Client"):
         self.players_ready.pop(client.user.uid, False)
@@ -527,6 +540,7 @@ class RoomController(HasChats):
         self.tell_client_curr_scope(client)
         client.tell_info(f"Entered Room: {self.name}")
         asyncio.create_task(self.room_info_loop(client))
+        self.send_room_info(client)
         self.send_recent_chat(client)
         self.send_admin_mod_status(client)
         self.on_list_teams(client)
@@ -660,11 +674,14 @@ class RoomController(HasChats):
         # this awaits loading our maps if they're not already loaded
         await self.initialized()
         if self.game is None:
+            team_order = list(range(len(self.teams)))
+            random.shuffle(team_order)
             game_model = GameSession(
                 players=[c.user for c in self.clients],
                 room=self.name,
                 lobby=self.lobby_inst.name,
                 teams=[[c.user.uid for c in team] for team in self.teams],
+                team_order=team_order,
                 map_list=self.model.map_list,
             )
             self.game = GameController(game_model, self)
@@ -724,10 +741,15 @@ class GameController(HasChats):
         client.set_scope(f"3|{self.name}")
 
     async def game_info_loop(self, client: "Client"):
-        client.write_message("GAME_INFO_FULL", self.to_full_game_info_json)
         while client in self.clients and not client.disconnected:
             client.write_message("GAME_INFO", self.to_inprog_game_info_json)
             await asyncio.sleep(5.0)
+
+    def send_game_info_full(self, client: "Client"):
+        client.write_message("GAME_INFO_FULL", self.to_full_game_info_json)
+
+    def send_maps_info_full(self, client: "Client"):
+        client.write_message("MAPS_INFO_FULL", dict(maps=list(m.safe_json for m in self.room.map_list)))
 
     def on_client_handed_off(self, client: "Client"):
         self.broadcast_player_left(client)
@@ -741,6 +763,8 @@ class GameController(HasChats):
         self.send_recent_chat(client)
         self.send_admin_mod_status(client)
         self.tell_player_list(client)
+        self.send_game_info_full(client)
+        self.send_maps_info_full(client)
         self.clients.add(client)
         self.assign_player_to_team(client)
         self.broadcast_player_joined(client)
@@ -751,8 +775,10 @@ class GameController(HasChats):
         client.disconnect()
 
     def replay_game_so_far(self, client: "Client"):
+        client.write_message("GAME_REPLAY_START", {'n_msgs': len(self.model.game_msgs)})
         for msg in self.model.game_msgs:
             client.write_json(msg.safe_json)
+        client.write_message("GAME_REPLAY_END", {})
 
     def assign_player_to_team(self, client: "Client"):
         uid = client.user.uid
@@ -1143,8 +1169,11 @@ class Lobby(HasChats):
 
     async def lobby_info_loop(self, client: Client):
         while client in self.clients and not client.disconnected:
-            client.write_message("LOBBY_INFO", self.json_info)
+            self.send_lobby_info(client)
             await asyncio.sleep(5.0)
+
+    def send_lobby_info(self, client: Client):
+        client.write_message("LOBBY_INFO", self.json_info)
 
     def on_client_handed_off(self, client: Client):
         if client in self.clients:
@@ -1158,6 +1187,7 @@ class Lobby(HasChats):
         self.tell_client_curr_scope(client)
         client.tell_info(f"Entered Lobby: {self.name}")
         asyncio.create_task(self.lobby_info_loop(client))
+        self.send_lobby_info(client)
         self.send_lobbies_list(client)
         self.send_admin_mod_status(client)
         self.send_recent_chat(client)

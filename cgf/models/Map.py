@@ -128,4 +128,5 @@ class Map(Document):
         fields = ['TrackID', 'Name', 'AuthorTime', 'Tags', 'TypeName', 'StyleName', 'LengthName', 'LengthSecs', 'LengthEnum', 'DifficultyName', 'HasThumbnail']
         for f in fields:
             d[f] = self.__getattribute__(f)
+        d['Name'] = self.GbxMapName
         return d

@@ -139,12 +139,13 @@ async def add_more_random_maps(n: int):
     if (n > 100): raise Exception(f"too many maps requested: {n}")
     logging.info(f"Fetching {n} random maps")
     if n <= 0: return
-    await asyncio.wait([_add_a_random_map() for _ in range(n)])
+    await asyncio.wait([_add_a_random_map(delay = i * 0.05) for i in range(n)])
     logging.info(f"Fetched {n} random maps")
 
-async def _add_a_random_map():
+async def _add_a_random_map(delay = 0):
+    if delay > 0: await asyncio.sleep(delay)
     async with get_session() as session:
-        async with session.get(f"https://trackmania.exchange/mapsearch2/search?api=on&random=1", timeout=5.0) as resp:
+        async with session.get(f"https://trackmania.exchange/mapsearch2/search?api=on&random=1", timeout=10.0) as resp:
             if resp.status == 200:
                 await _add_maps_from_json(await resp.json())
             else:
@@ -214,7 +215,7 @@ async def get_some_maps(n: int, min_secs: int = 0, max_secs: int = LONG_MAP_SECS
     maps_checked = 0
     while sent < n:
         while len(fresh_random_maps) < n:
-            await add_more_random_maps(n)
+            await add_more_random_maps(10)
         m = fresh_random_maps.pop()
         maps_checked += 1
         if min_secs <= m.LengthSecs <= max_secs:

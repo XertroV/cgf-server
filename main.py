@@ -102,6 +102,11 @@ async def main():
 
     asyncio.create_task(RMC.maintain_random_maps())
 
+    for l in all_lobbies.values():
+        await l.initialized()
+        for r in l.rooms.values():
+            await r.initialized()
+
     log.info(f"Loaded {count_rooms} total rooms with {count_games} total games")
 
 

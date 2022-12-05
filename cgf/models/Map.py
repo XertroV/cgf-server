@@ -37,11 +37,12 @@ def length_secs_to_enum(length_secs):
 
 def tmx_date_to_ts(date_str: str):
     # "2020-10-26T20:11:55.657"
+    # "2022-02-26T00:29:13"
     frac = "000"
     if len(date_str) > 19 and date_str[19] == ".":
         frac = date_str[20:]
         date_str = date_str[:19]
-    else:
+    elif len(date_str) != 19:
         logging.warning(f"Unknown date format: {date_str} ??")
     return datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S").timestamp() + float(frac)/1000
 

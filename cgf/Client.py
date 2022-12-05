@@ -94,7 +94,7 @@ class Room(HasAdminsModel):
     maps_required: int = Field(default=1)
     min_secs: int = Field(default=15)
     max_secs: int = Field(default=45)
-    map_list: list[Link[Map]] = Field(default_factory=list)
+    map_list: list[Link[Map]]
     # ts
     creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
 
@@ -177,6 +177,10 @@ class GameSession(HasAdminsModel):
         )
         print(ret)
         return ret
+
+    @property
+    def get_maps_list_full_for_info(self):
+        return list(m.safe_json_shorter for m in self.map_list)
 
     @property
     def to_inprog_game_info_json(self):
@@ -271,7 +275,10 @@ class HasAdmins(HasClients):
         self.mods.remove(user)
 
     def persist_model(self):
-        asyncio.create_task(self.model.save_changes())
+        asyncio.create_task(self.persist_model_inner())
+
+    async def persist_model_inner(self):
+        await self.model.save_changes()
 
     def kick_this_client(self, client: "Client"):
         for c in self.clients:
@@ -439,7 +446,7 @@ class RoomController(HasChats):
 
     async def load_game(self):
         game_model = await GameSession.find_one(
-            # GTE(GameSession.creation_ts, time.time() - (3600 * 6)), # within last 6 hrs
+            GTE(GameSession.creation_ts, time.time() - (3600 * 6)), # within last 6 hrs
             Eq(GameSession.room, self.name),
             Eq(GameSession.lobby, self.lobby_inst.name)
         )
@@ -452,6 +459,9 @@ class RoomController(HasChats):
         self.loaded_game = True
 
     async def load_maps(self):
+        # these maps (in the room) come back in a random order. Not the case for game session tho. IDK, weird
+        # print([m.TrackID for m in self.model.map_list])
+        # print(self.model.maps_required - len(self.model.map_list))
         maps_needed = self.model.maps_required - len(self.model.map_list)
         if maps_needed > 0:
             # log.debug(f"Room asking for {maps_needed} maps.")
@@ -749,7 +759,7 @@ class GameController(HasChats):
         client.write_message("GAME_INFO_FULL", self.to_full_game_info_json)
 
     def send_maps_info_full(self, client: "Client"):
-        client.write_message("MAPS_INFO_FULL", dict(maps=list(m.safe_json_shorter for m in self.room.map_list)))
+        client.write_message("MAPS_INFO_FULL", dict(maps=self.model.get_maps_list_full_for_info))
 
     def on_client_handed_off(self, client: "Client"):
         self.broadcast_player_left(client)
@@ -1373,4 +1383,7 @@ class ChatMessages(Document):
 
     def append(self, msg: Message):
         self.msgs.append(msg)
+        self.save_changes_in_task()
+
+    def save_changes_in_task(self):
         asyncio.create_task(self.save_changes())

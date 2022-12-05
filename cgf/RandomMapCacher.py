@@ -30,9 +30,11 @@ async def init_known_maps():
         asyncio.create_task(ensure_known_maps_cached())
 
 async def ensure_known_maps_cached():
+    log_s3_progress = True
     while not SHUTDOWN:
         _known_maps = set(known_maps)
-        cached_maps.update(await asyncio.get_event_loop().run_in_executor(None, _get_bucket_keys))
+        cached_maps.update(await asyncio.get_event_loop().run_in_executor(None, _get_bucket_keys, log_s3_progress))
+        log_s3_progress = False  # don't log again on following loops
         uncached = _known_maps - cached_maps
         logging.info(f"Getting {len(uncached)} uncached but known maps")
         for i, track_id in enumerate(uncached):
@@ -49,8 +51,10 @@ async def ensure_known_maps_cached():
         for _ in range(waiting_secs * 10):
             await asyncio.sleep(0.1)
             if SHUTDOWN: break
+        # at end we want to get any new maps so we cache them
+        await add_latest_maps()
 
-def _get_bucket_keys() -> set[int]:
+def _get_bucket_keys(log_s3_progress = True) -> set[int]:
     cached_maps = set()
     avg_size = 0
     nb_in_avg = 0
@@ -63,7 +67,7 @@ def _get_bucket_keys() -> set[int]:
             nb_in_avg += 1
         except Exception as e:
             print(f"Got exception getting key: {e}")
-        if len(cached_maps) % 1000 == 0:
+        if log_s3_progress and len(cached_maps) % 1000 == 0:
             logging.info(f"Loading cached maps... {len(cached_maps)} / ??? | avg size: {avg_size / 1024:.1f} kb")
         # does not work when running in executor
         # if not asyncio.get_event_loop().is_running():

@@ -6,3 +6,4 @@ __pycache__
 .s3
 .s3.*
 *.log
+.openplanet-auth

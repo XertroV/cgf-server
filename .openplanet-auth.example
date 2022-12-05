@@ -1,0 +1,2 @@
+secret=<secret_token_from_openplanet>
+url=https://openplanet.dev/api/auth/validate

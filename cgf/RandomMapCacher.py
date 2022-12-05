@@ -206,9 +206,9 @@ async def _add_maps_from_json(j: dict, add_to_random_maps = True):
         asyncio.create_task(cache_map(tid, delay_ms=i*100))
 
 async def get_some_maps(n: int, min_secs: int = 0, max_secs: int = LONG_MAP_SECS):
-    min_secs = max(0, min_secs)
-    max_secs = min(LONG_MAP_SECS, max_secs)
-    if min_secs >= max_secs: raise Exception(f"min secs >= max secs")
+    min_secs = max(15, min_secs)
+    max_secs = min(LONG_MAP_SECS, max(15, max_secs))
+    if min_secs > max_secs: raise Exception(f"min secs > max secs")
     if min_secs % 15 != 0: raise Exception(f"min_secs % 15 != 0: {min_secs}")
     if max_secs % 15 != 0: raise Exception(f"max_secs % 15 != 0: {max_secs}")
     sent = 0

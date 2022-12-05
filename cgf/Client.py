@@ -672,8 +672,8 @@ class RoomController(HasChats):
     async def on_join_game_now(self, client: "Client", *args):
         game_started = self.has_game_started()
         if not game_started:
-            time_left = abs(self.model.game_start_time - time.time())
-            if time_left < 1.0:
+            time_left = self.model.game_start_time - time.time()
+            if 0 < time_left < 1.0:
                 await asyncio.sleep(time_left + 0.05)
             elif time_left >= 1.0:
                 client.tell_warning(f"Can't join the game early.")
@@ -1007,12 +1007,14 @@ class Client:
                 elif scope_type == 2:
                     room_name = scope_name
                     _r = await Room.find_one(Room.name == scope_name)
-                    lobby_name = _r.lobby
+                    if _r is not None:
+                        lobby_name = _r.lobby
                 elif scope_type == 3:
                     game_name = scope_name
                     _g = await GameSession.find_one(GameSession.name == scope_name)
-                    lobby_name = _g.lobby
-                    room_name = _g.room
+                    if _g is not None:
+                        lobby_name = _g.lobby
+                        room_name = _g.room
                 else:
                     log.warning(f"Unknown scope type: {scope_type} from last_scope: {self.user.last_scope}")
             await self.lobby.handoff(self, lobby_name, room_name, game_name)

@@ -514,6 +514,9 @@ class RoomController(HasChats):
         if len(self.clients) >= self.model.player_limit:
             client.tell_info(f"Sorry, the room is full.")
             return
+        if self.has_game_started() and not self.game.includes_player(client.user.uid):
+            client.tell_info(f"Sorry, the game has already started with other players.")
+            return
         # todo if game has started
         self.on_client_entered(client)
         await self.initialized()
@@ -733,6 +736,12 @@ class GameController(HasChats):
         self.room = room_inst
         super().__init__()
         self.teams = list(list() for _ in range(len(self.model.teams)))
+
+    def includes_player(self, uid: str):
+        for team in self.model.teams:
+            if uid in team:
+                return True
+        return False
 
     async def handoff(self, client: "Client"):
         if client.user in self.model.kicked_players:

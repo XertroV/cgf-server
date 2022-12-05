@@ -1103,7 +1103,7 @@ class Lobby(HasChats):
         all_lobbies[model.name] = self
         self.loaded_rooms = False
         self.load_rooms_task = asyncio.create_task(self.load_rooms())
-
+        self.clear_old_rooms_task = asyncio.create_task(self.clear_old_rooms())
 
     @property
     def name(self):
@@ -1140,6 +1140,20 @@ class Lobby(HasChats):
                 room = RoomController(room_model, lobby_inst=self)
                 self.rooms[room.name] = room
             self.loaded_rooms = True
+
+    async def clear_old_rooms(self):
+        await asyncio.sleep(20)
+        while not SHUTDOWN:
+            for room in self.rooms.values():
+                # clear rooms older than 6 hrs
+                if time.time() > room.model.creation_ts + (60 * 60 * 6):
+                    if room.model.is_open:
+                        room.model.is_open = False
+                        room.persist_model()
+                    del self.rooms[room.name]
+                    log.info(f"Removed room: {room.name}")
+            # sleep 15 min between loops
+            await asyncio.sleep(60 * 15)
 
     @property
     def json_info(self):

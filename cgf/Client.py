@@ -1321,7 +1321,9 @@ class Lobby(HasChats):
         # note: will throw if name collision
         await room.model.save()
         self.rooms[room.name] = room
-        self.broadcast_msg(Message(type="NEW_ROOM", payload=room.to_room_info_json))
+        public_room_info = room.to_room_info_json
+        public_room_info['n_players'] = 1
+        self.broadcast_msg(Message(type="NEW_ROOM", payload=public_room_info))
         client.write_message("ROOM_INFO", room.to_created_room_json)
         await self.handoff_to_room(client, room)
 

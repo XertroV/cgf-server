@@ -546,6 +546,7 @@ class RoomController(HasChats):
         self.broadcast_player_left(client)
         if client in self.clients:
             self.clients.remove(client)
+        self.lobby_inst.update_room_status(self)
 
     def on_client_entered(self, client: "Client"):
         self.tell_client_curr_scope(client)

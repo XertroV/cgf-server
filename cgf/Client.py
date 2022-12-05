@@ -431,6 +431,7 @@ class RoomController(HasChats):
 
     def __init__(self, model=None, lobby_inst=None, **kwargs):
         super().__init__()
+        if 'map_list' not in kwargs: kwargs['map_list'] = list()
         self.model = model if model is not None else Room(**kwargs)
         # self.game = None
         self.lobby_inst: "Lobby" = lobby_inst

@@ -34,7 +34,8 @@
 |y| all | PLAYER_JOINED | `{username: string, uid: string}` | |
 |y| all | PLAYER_LEFT | `{username: string, uid: string}` | |
 |y| all | PLAYER_LIST | `{players: {username: string, uid: string}[]}` | |
-|y| `1|<LobbyName>` | NEW_ROOM | `{name: string, player_limit: int, player_count: int}` | |
+|y| `1|<LobbyName>` | NEW_ROOM | `Room: {name: string, player_limit, n_teams, is_public, is_open, n_maps, min_secs, max_secs, game_start_time, n_players: int, ready_count: int}` | |
+|y| `1|<LobbyName>` | ROOM_INFO | `Room & {join_code: string}` | |
 
 ## User Broadcast
 

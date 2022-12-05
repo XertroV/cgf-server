@@ -558,6 +558,7 @@ class RoomController(HasChats):
         self.tell_player_list(client)
         self.clients.add(client)
         self.broadcast_player_joined(client)
+        self.lobby_inst.update_room_status(self)
 
     def on_client_left(self, client: "Client"):
         self.on_client_handed_off(client)
@@ -1340,6 +1341,9 @@ class Lobby(HasChats):
         self.broadcast_msg(Message(type="NEW_ROOM", payload=public_room_info))
         client.write_message("ROOM_INFO", room.to_created_room_json)
         await self.handoff_to_room(client, room)
+
+    def update_room_status(self, room: RoomController):
+        self.broadcast_msg(Message(type="ROOM_UPDATE", payload=dict(name=room.name, n_players=len(room.clients))))
 
     async def on_join_room(self, client: Client, msg: Message):
         name = msg.payload.get('name', None)

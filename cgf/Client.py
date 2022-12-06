@@ -96,7 +96,7 @@ class Room(HasAdminsModel):
     max_secs: int = Field(default=45)
     map_list: list[Link[Map]]
     # ts
-    creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
+    creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=time.time)
 
     class Settings:
         use_state_management = True
@@ -1155,13 +1155,15 @@ class Lobby(HasChats):
     async def clear_old_rooms(self):
         await asyncio.sleep(20)
         while not SHUTDOWN:
+            log.info(f"Checking for old rooms to remove.")
             for room in self.rooms.values():
                 # clear rooms older than 6 hrs
                 if time.time() > room.model.creation_ts + (60 * 60 * 6):
                     if room.model.is_open:
                         room.model.is_open = False
                         room.persist_model()
-                    del self.rooms[room.name]
+                    self.rooms.pop(room.name)
+                    # del self.rooms[room.name]
                     log.info(f"Removed room: {room.name}")
             # sleep 15 min between loops
             await asyncio.sleep(60 * 15)
@@ -1346,9 +1348,7 @@ class Lobby(HasChats):
         # note: will throw if name collision
         await room.model.save()
         self.rooms[room.name] = room
-        public_room_info = room.to_room_info_json
-        public_room_info['n_players'] = 1
-        self.broadcast_msg(Message(type="NEW_ROOM", payload=public_room_info))
+        self.broadcast_msg(Message(type="NEW_ROOM", payload=room.to_room_info_json))
         client.write_message("ROOM_INFO", room.to_created_room_json)
         await self.handoff_to_room(client, room)
 

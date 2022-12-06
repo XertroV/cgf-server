@@ -1155,7 +1155,9 @@ class Lobby(HasChats):
     async def clear_old_rooms(self):
         await asyncio.sleep(20)
         while not SHUTDOWN:
-            log.info(f"Checking for old rooms to remove.")
+            n_rooms = len(self.rooms)
+            if n_rooms > 0:
+                log.info(f"Checking {n_rooms} rooms for old rooms to remove.")
             for room in self.rooms.values():
                 # clear rooms older than 6 hrs
                 if time.time() > room.model.creation_ts + (60 * 60 * 6):

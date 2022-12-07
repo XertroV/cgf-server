@@ -9,9 +9,10 @@ import signal
 import urllib3
 import threading
 
-from cgf.Client import Client, ChatMessages, Lobby, LobbyModel, Message, Room, GameSession, get_main_lobby, all_clients, populate_all_lobbies, all_lobbies, all_users
+from cgf.Client import Client, ChatMessages, Lobby, LobbyModel, Message, Room, GameSession, get_main_lobby, all_clients, populate_all_lobbies, all_lobbies
 import cgf.RandomMapCacher as RMC
 from cgf.User import User
+from cgf.users import all_users
 from cgf.consts import SERVER_VERSION, SHUTDOWN, SHUTDOWN_EVT
 from cgf.models.Map import Map
 from cgf.users import all_users

@@ -5,6 +5,7 @@ from logging import info
 import time
 
 from cgf.User import User
+from cgf.op_auth import TokenResp
 
 
 all_users: dict[str, User] = dict()
@@ -14,12 +15,19 @@ def get_user(uid: str) -> User:
     return all_users.get(uid, None)
 
 
+async def register_authed_user(token: TokenResp) -> User:
+    uid = token.account_id
+    u = User(uid=uid, name=token.display_name, secret=gen_secret())
+    await u.save()
+    all_users[u.uid] = u
+    return u
+
+
 async def register_user(name: str, wsid: str) -> User:
     uid = gen_user_uid(name, wsid)
     u = User(uid=uid, name=name, secret=gen_secret())
     await u.save()
     all_users[u.uid] = u
-    # client_secrets.add(u)
     return u
 
 

@@ -1,6 +1,6 @@
 import asyncio
 import json
-from logging import debug, warn, warning
+from logging import debug, warn, warning, info
 import os
 import random
 import struct
@@ -17,9 +17,11 @@ import beanie
 
 import cgf.RandomMapCacher as RMC
 from cgf.models.Map import Map
-from cgf.users import *
+from cgf.User import User
+from cgf.users import gen_join_code, gen_secret, gen_uid, gen_user_uid, get_user, register_authed_user, register_user, authenticate_user
 from cgf.consts import *
 from cgf.utils import *
+from cgf.op_auth import check_token
 
 from .User import User
 from .consts import SERVER_VERSION
@@ -203,7 +205,6 @@ class HasClients:
                 return client
 
     def broadcast_msg(self, msg: Message):
-            # if client.user != msg.user:
         self.broadcast_json(msg.safe_json)
 
     def broadcast_json(self, msg_j: dict):
@@ -389,7 +390,7 @@ class HasChats(HasAdmins):
             start_ix = max(0, n_msgs - 20)
             msg_ids = [self.chats.msgs[i].ref.id for i in range(start_ix, n_msgs)]
             self.recent_chat_msgs = await Message.find(In(Message.id, msg_ids), fetch_links=True).to_list()
-            info(f"[{self.container_type} | {self.name}] Loaded recent chats; nb: {len(self.recent_chat_msgs)}")
+            log.info(f"[{self.container_type} | {self.name}] Loaded recent chats; nb: {len(self.recent_chat_msgs)}")
             self.loaded_chat = True
 
     async def process_chat_msg(self, client: "Client", msg: Message):
@@ -412,7 +413,7 @@ class HasChats(HasAdmins):
     def send_recent_chat(self, client: "Client"):
         for msg in self.recent_chat_msgs:
             client.write_json(msg.safe_json)
-        info(f"Sent recent chats ({len(self.recent_chat_msgs)}) to {client.client_ip}")
+        log.info(f"Sent recent chats ({len(self.recent_chat_msgs)}) to {client.client_ip}")
 
 
 
@@ -969,7 +970,7 @@ class Client:
         msg = await self.read_json()
         if msg is None: return None
         msg = self.validate_pl(msg)
-        if msg.type != "LOGIN":
+        if not msg.type.startswith("LOGIN"):
             await msg.insert()
         return msg
 
@@ -1039,6 +1040,15 @@ class Client:
             return
         user = None
         checked_for_user = False
+        if msg.type == "LOGIN_TOKEN":
+            checked_for_user = True
+            tokenInfo = await check_token(msg['t'])
+            if tokenInfo is not None:
+                user = await User.find_one(User.uid == tokenInfo.account_id)
+                if user is None:
+                    user = await register_authed_user(tokenInfo)
+                if user is not None:
+                    self.write_json(dict(type="LOGGED_IN", account_id=tokenInfo.account_id, display_name=tokenInfo.display_name))
         if msg.type == "LOGIN":
             user = authenticate_user(msg['uid'], msg['username'], msg['secret'])
             checked_for_user = True
@@ -1052,7 +1062,7 @@ class Client:
                 self.write_json(dict(type="REGISTERED", payload=user.unsafe_json))
         if user is None:
             if not checked_for_user:
-                self.tell_error("Invalid type, must be LOGIN or REGISTER")
+                self.tell_error("Invalid type, must be LOGIN, LOGIN_TOKEN, or REGISTER")
             else:
                 self.tell_error("Login failed")
         self.user = user

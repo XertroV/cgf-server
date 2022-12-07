@@ -10,8 +10,8 @@ s3_secret_key = None
 s3_service_url = None
 s3_bucket_name = None
 
-lines = Path('.s3').read_text().strip().split('\n')
-for line in lines:
+s3_lines = Path('.s3').read_text().strip().split('\n')
+for line in s3_lines:
     key, val = line.strip().split("=", 2)
     if key.strip() == "access-key":
         s3_access_key = val.strip()

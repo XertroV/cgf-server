@@ -43,6 +43,3 @@ async def check_token(token: str) -> Optional[TokenResp]:
                 logging.warn(f"Error from server for token check, status: {resp_j['error']}")
                 return None
             return TokenResp(**resp_j)
-            # account_id = resp_j['account_id']
-            # display_name = resp_j['display_name']
-            # token_time = resp_j['token_time']

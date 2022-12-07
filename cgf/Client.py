@@ -18,7 +18,7 @@ import beanie
 import cgf.RandomMapCacher as RMC
 from cgf.models.Map import Map
 from cgf.User import User
-from cgf.users import gen_join_code, gen_secret, gen_uid, gen_user_uid, get_user, register_authed_user, register_user, authenticate_user
+from cgf.users import gen_join_code, gen_secret, gen_uid, gen_user_uid, get_user, register_authed_user, register_user, authenticate_user, uid_from_wsid
 from cgf.consts import *
 from cgf.utils import *
 from cgf.op_auth import check_token
@@ -1044,11 +1044,11 @@ class Client:
             checked_for_user = True
             tokenInfo = await check_token(msg['t'])
             if tokenInfo is not None:
-                user = await User.find_one(User.uid == tokenInfo.account_id)
+                user = await User.find_one(User.uid == uid_from_wsid(tokenInfo.account_id))
                 if user is None:
                     user = await register_authed_user(tokenInfo)
                 if user is not None:
-                    self.write_json(dict(type="LOGGED_IN", account_id=tokenInfo.account_id, display_name=tokenInfo.display_name))
+                    self.write_json(dict(type="LOGGED_IN", uid=user.uid, account_id=tokenInfo.account_id, display_name=tokenInfo.display_name))
         if msg.type == "LOGIN":
             user = authenticate_user(msg['uid'], msg['username'], msg['secret'])
             checked_for_user = True

@@ -16,7 +16,7 @@ def get_user(uid: str) -> User:
 
 
 async def register_authed_user(token: TokenResp) -> User:
-    uid = token.account_id
+    uid = uid_from_wsid(token.account_id)
     u = User(uid=uid, name=token.display_name, secret=gen_secret())
     await u.save()
     all_users[u.uid] = u
@@ -52,6 +52,9 @@ def gen_user_uid(name: str, wsid: str) -> str:
 
 def gen_uid(length=10) -> str:
     return os.urandom(length).hex()
+
+def uid_from_wsid(wsid: str) -> str:
+    return sha_256(wsid)[:16]
 
 def sha_256(text: str) -> str:
     return hashlib.sha256(text.encode("UTF8")).hexdigest()

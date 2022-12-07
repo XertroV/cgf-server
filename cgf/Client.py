@@ -655,7 +655,7 @@ class RoomController(HasChats):
 
     def set_player_ready(self, client: "Client", is_ready: bool):
         self.players_ready[client.user.uid] = is_ready
-        self.ready_count = sum(1 if v else 0 for v in self.players_ready.values())
+        self.ready_count = sum(1 if self.players_ready[c.user.uid] else 0 for c in self.clients)
 
     def broadcast_player_ready(self, client: "Client"):
         self.broadcast_msg(Message(type="PLAYER_READY", payload=dict(uid=client.user.uid, is_ready=self.players_ready[client.user.uid], ready_count=self.ready_count), visibility="global"))
@@ -1044,9 +1044,12 @@ class Client:
             checked_for_user = True
             tokenInfo = await check_token(msg['t'])
             if tokenInfo is not None:
-                user = await User.find_one(User.uid == uid_from_wsid(tokenInfo.account_id))
+                # user = await User.find_one(User.uid == uid_from_wsid(tokenInfo.account_id))
+                user = get_user(uid_from_wsid(tokenInfo.account_id))
                 if user is None:
                     user = await register_authed_user(tokenInfo)
+                # update this in case the user updated their account name
+                user.name = tokenInfo.display_name
                 if user is not None:
                     self.write_json(dict(type="LOGGED_IN", uid=user.uid, account_id=tokenInfo.account_id, display_name=tokenInfo.display_name))
         if msg.type == "LOGIN":

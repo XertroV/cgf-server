@@ -168,6 +168,7 @@ class GameSession(HasAdminsModel):
         if self.team_order is None or len(self.team_order) == 0:
             self.team_order = list(range(len(self.teams)))
             random.shuffle(self.team_order)
+            self.persist_model()
         ret = dict(
             players=[p.safe_json for p in self.players],
             n_game_msgs=len(self.game_msgs),
@@ -434,7 +435,6 @@ class RoomController(HasChats):
         super().__init__()
         if 'map_list' not in kwargs: kwargs['map_list'] = list()
         self.model = model if model is not None else Room(**kwargs)
-        # self.game = None
         self.lobby_inst: "Lobby" = lobby_inst
         self.players_ready = dict()
         self.uid_to_teams = dict()
@@ -569,17 +569,17 @@ class RoomController(HasChats):
         self.on_client_handed_off(client)
         client.disconnect()
 
-    # main room loop
+    # main room loop for client
     # - chatting
     # - join teams
     # - mark ready
     async def run_client(self, client: "Client"):
-        # self.send_recent_chat(client)
         while True:
             msg = await client.read_valid()
             if msg is None:
                 self.on_client_left(client)
                 return
+            # process each message and break on leave
             if await self.process_msg(client, msg) == "LEAVE":
                 break
 
@@ -736,13 +736,18 @@ class GameController(HasChats):
         self.model = model
         self.room = room_inst
         super().__init__()
-        self.teams = list(list() for _ in range(len(self.model.teams)))
+        # clients assigned on joining the game
+        self.teams = list(list() for _ in model.teams)
 
-    def includes_player(self, uid: str):
-        for team in self.model.teams:
+    def players_team(self, uid: str):
+        '''return the team based on a uid. this is NOT accurate when 1 account is running 2 clients.'''
+        for i, team in enumerate(self.model.teams):
             if uid in team:
-                return True
-        return False
+                return i
+        return -1
+
+    def includes_player(self, uid):
+        return self.players_team(uid) >= 0
 
     async def handoff(self, client: "Client"):
         if client.user in self.model.kicked_players:

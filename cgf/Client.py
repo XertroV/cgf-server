@@ -501,9 +501,9 @@ class RoomController(HasChats):
 
     async def when_empty_retire_room(self):
         ''' Wait till the room is empty for 30s, and retire it.
-        Initial delay of 60s.
+        Initial delay of 6s.
         '''
-        await asyncio.sleep(60)
+        await asyncio.sleep(6)
         while self.name in self.lobby_inst.rooms:
             await asyncio.sleep(1)
             if not self.is_empty: continue
@@ -1243,6 +1243,7 @@ class Lobby(HasChats):
             room.persist_model()
         if room.name in self.rooms:
             self.rooms.pop(room.name)
+        self.broadcast_msg(Message(type="ROOM_RETIRED", payload=dict(name=room.name)))
 
     @property
     def json_info(self):

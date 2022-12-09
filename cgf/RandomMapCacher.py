@@ -19,13 +19,12 @@ maps_to_cache: list[Map] = list()
 known_maps: set[int] = set()
 cached_maps: set[int] = set()
 
-MAINTAIN_N_MAPS = 20  #200
+MAINTAIN_N_MAPS = 20 if not LOCAL_DEV_MODE else 2  #200
 
 async def init_known_maps():
     _maps = await Map.find_all(projection_model=MapJustID).to_list()
     known_maps.update([m.TrackID for m in _maps])
     logging.info(f"Known maps: {len(known_maps)}")
-    # todo: re-enable when not developing
     if not LOCAL_DEV_MODE:
         asyncio.create_task(ensure_known_maps_cached())
 

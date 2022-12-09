@@ -655,7 +655,7 @@ class RoomController(HasChats):
 
     def set_player_ready(self, client: "Client", is_ready: bool):
         self.players_ready[client.user.uid] = is_ready
-        self.ready_count = sum(1 if self.players_ready[c.user.uid] else 0 for c in self.clients)
+        self.ready_count = sum(1 if self.players_ready.get(c.user.uid, False) else 0 for c in self.clients)
 
     def broadcast_player_ready(self, client: "Client"):
         self.broadcast_msg(Message(type="PLAYER_READY", payload=dict(uid=client.user.uid, is_ready=self.players_ready[client.user.uid], ready_count=self.ready_count), visibility="global"))
@@ -1057,20 +1057,23 @@ class Client:
                 user.name = tokenInfo.display_name
                 if user is not None:
                     self.write_json(dict(type="LOGGED_IN", uid=user.uid, account_id=tokenInfo.account_id, display_name=tokenInfo.display_name))
-        if msg.type == "LOGIN":
+        if ENABLE_LEGACY_AUTH and msg.type == "LOGIN":
             user = authenticate_user(msg['uid'], msg['username'], msg['secret'])
             checked_for_user = True
             if user is not None:
                 await user.set({User.last_seen: time.time(), User.n_logins: user.n_logins + 1})
                 self.write_json(dict(type="LOGGED_IN"))
-        if msg.type == "REGISTER":
+        if ENABLE_LEGACY_AUTH and msg.type == "REGISTER":
             user = await register_user(msg['username'], msg['wsid'])
             checked_for_user = True
             if user is not None:
                 self.write_json(dict(type="REGISTERED", payload=user.unsafe_json))
         if user is None:
             if not checked_for_user:
-                self.tell_error("Invalid type, must be LOGIN, LOGIN_TOKEN, or REGISTER")
+                if ENABLE_LEGACY_AUTH:
+                    self.tell_error("Invalid type, must be LOGIN, LOGIN_TOKEN, or REGISTER")
+                else:
+                    self.tell_error("Invalid type, must be LOGIN_TOKEN")
             else:
                 self.tell_error("Login failed")
         self.user = user

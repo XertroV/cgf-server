@@ -99,6 +99,7 @@ class Room(HasAdminsModel):
     min_secs: int = Field(default=15)
     max_secs: int = Field(default=45)
     map_list: list[int]
+    # note: this type signature causes beanie to cast values to strings
     game_opts: dict[str, str] = Field(default_factory=dict)
     # ts
     creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=time.time)
@@ -145,6 +146,7 @@ class Room(HasAdminsModel):
             min_secs=self.min_secs,
             max_secs=self.max_secs,
             game_start_time=self.game_start_time,
+            started=0 < self.game_start_time < time.time(),
             game_opts=self.game_opts,
         )
 
@@ -500,7 +502,7 @@ class RoomController(HasChats):
         return not has_clients and not game_has_clients
 
     async def when_empty_retire_room(self):
-        ''' Wait till the room is empty for 30s, and retire it.
+        ''' Wait till the room is empty for 60s, and retire it.
         Initial delay of 6s.
         '''
         await asyncio.sleep(6)
@@ -511,7 +513,7 @@ class RoomController(HasChats):
             while self.is_empty:
                 slept += 0.1
                 await asyncio.sleep(0.1)
-                if not self.is_empty or slept >= 30.0: break
+                if not self.is_empty or slept >= 60.0: break
             if self.is_empty: break
         # retire
         self.lobby_inst.retire_room(self)

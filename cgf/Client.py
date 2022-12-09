@@ -96,7 +96,8 @@ class Room(HasAdminsModel):
     maps_required: int = Field(default=1)
     min_secs: int = Field(default=15)
     max_secs: int = Field(default=45)
-    map_list: list[Link[Map]]
+    map_list: list[int]
+    game_opts: dict[str, str] = Field(default_factory=dict)
     # ts
     creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=time.time)
 
@@ -134,6 +135,7 @@ class Room(HasAdminsModel):
             min_secs=self.min_secs,
             max_secs=self.max_secs,
             game_start_time=self.game_start_time,
+            game_opts=self.game_opts,
         )
 
 
@@ -146,7 +148,7 @@ class GameSession(HasAdminsModel):
     # list of player UIDs
     teams: list[list[str]]
     team_order: list[int] = Field(default_factory=list)
-    map_list: list[Link[Map]]
+    map_list: list[int]
     creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
     class Settings:
         use_state_management = True
@@ -174,16 +176,12 @@ class GameSession(HasAdminsModel):
             n_game_msgs=len(self.game_msgs),
             teams=self.teams,
             team_order=self.team_order,
-            map_list=[m.TrackID for m in self.map_list],
+            map_list=self.map_list,
             room=self.room,
             lobby=self.lobby,
         )
         print(ret)
         return ret
-
-    @property
-    def get_maps_list_full_for_info(self):
-        return list(m.safe_json_shorter for m in self.map_list)
 
     @property
     def to_inprog_game_info_json(self):
@@ -430,6 +428,7 @@ class RoomController(HasChats):
     ready_count: int = 0
     uid_to_teams: dict[str, int]
     teams: list[list["Client"]]
+    maps: dict[int, Map]
 
     def __init__(self, model=None, lobby_inst=None, **kwargs):
         super().__init__()
@@ -439,6 +438,7 @@ class RoomController(HasChats):
         self.players_ready = dict()
         self.uid_to_teams = dict()
         self.teams = [list() for _ in range(self.model.n_teams)]
+        self.maps = dict()
         asyncio.create_task(self.load_game())
         asyncio.create_task(self.load_maps())
 
@@ -465,13 +465,17 @@ class RoomController(HasChats):
         # print([m.TrackID for m in self.model.map_list])
         # print(self.model.maps_required - len(self.model.map_list))
         maps_needed = self.model.maps_required - len(self.model.map_list)
+        existing_maps = await Map.find_many(In(Map.TrackID, self.model.map_list)).to_list()
+        for m in existing_maps:
+            self.maps[m.TrackID] = m
         if maps_needed > 0:
             # log.debug(f"Room asking for {maps_needed} maps.")
             async for m in RMC.get_some_maps(maps_needed, self.model.min_secs, self.model.max_secs):
                 # log.debug(f"Got map: {m.json()}")
                 if (m.id is None):
                     await m.save()
-                self.model.map_list.append(m)
+                self.model.map_list.append(m.TrackID)
+                self.maps[m.TrackID] = m
             self.persist_model()
         self.loaded_maps = True
 
@@ -520,7 +524,6 @@ class RoomController(HasChats):
             return
         # todo if game has started
         self.on_client_entered(client)
-        await self.initialized()
         try:
             if game_name is not None:
                 await self.on_join_game_now(client, None)
@@ -722,11 +725,17 @@ class GameController(HasChats):
 
     @property
     def to_full_game_info_json(self):
-        return self.model.to_full_game_info_json
+        return dict(
+            game_opts=self.room.model.game_opts,
+            **self.model.to_full_game_info_json)
 
     @property
     def to_inprog_game_info_json(self):
         return self.model.to_inprog_game_info_json
+
+    @property
+    def get_maps_list_full_for_info(self):
+        return [self.room.maps[tid].safe_json_shorter for tid in self.model.map_list]
 
     @property
     def name(self):
@@ -777,7 +786,7 @@ class GameController(HasChats):
         client.write_message("GAME_INFO_FULL", self.to_full_game_info_json)
 
     def send_maps_info_full(self, client: "Client"):
-        client.write_message("MAPS_INFO_FULL", dict(maps=self.model.get_maps_list_full_for_info))
+        client.write_message("MAPS_INFO_FULL", dict(maps=self.get_maps_list_full_for_info))
 
     def on_client_handed_off(self, client: "Client"):
         self.broadcast_player_left(client)
@@ -1359,6 +1368,12 @@ class Lobby(HasChats):
         max_secs = clamp(msg.payload['max_secs'], MIN_SECS, MAX_SECS)
         if (max_secs < min_secs):
             return client.tell_error(f"max map length less than min map length")
+
+        game_opts: dict = msg.payload.get('game_opts', dict())
+        if not isinstance(game_opts, dict): return client.tell_error(f"Invalid format for game_opts.")
+        for k,v in game_opts.items():
+            if not isinstance(k, str) or isinstance(v, dict) or isinstance(v, list):
+                return client.tell_error(f"Invalid k,v pair in game opts: `{k}: {v}`")
         # send back: {name: string, player_limit: int, n_teams: int, is_public: bool, join_code: str}
         room = RoomController(lobby_inst=self,
             name=name, lobby=self.name,
@@ -1367,6 +1382,7 @@ class Lobby(HasChats):
             admins=[msg.user],
             maps_required=maps_required,
             min_secs=min_secs, max_secs=max_secs,
+            game_opts=game_opts,
         )
         # note: will throw if name collision
         await room.model.save()

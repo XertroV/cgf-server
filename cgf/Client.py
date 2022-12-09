@@ -13,6 +13,7 @@ from pydantic import Field
 
 from beanie import Document, PydanticObjectId, Link, Indexed
 from beanie.operators import GTE, Eq, In
+from beanie.exceptions import StateNotSaved
 import beanie
 
 import cgf.RandomMapCacher as RMC
@@ -87,6 +88,7 @@ class Room(HasAdminsModel):
     lobby: Indexed(str)
     is_public: bool
     is_open: bool = True
+    is_retired: bool = False
     join_code: str = Field(default_factory=gen_join_code)
     game_start_time: float = -1
     # state / config stuff
@@ -105,6 +107,14 @@ class Room(HasAdminsModel):
         use_state_management = True
         indexes = [
             [
+                ("creation_ts", pymongo.DESCENDING),
+                ("lobby", pymongo.ASCENDING),
+            ],
+            [
+                ("join_code", pymongo.ASCENDING),
+            ],
+            [
+                ("is_retired", pymongo.ASCENDING),
                 ("creation_ts", pymongo.DESCENDING),
                 ("lobby", pymongo.ASCENDING),
             ],
@@ -278,7 +288,10 @@ class HasAdmins(HasClients):
         asyncio.create_task(self.persist_model_inner())
 
     async def persist_model_inner(self):
-        await self.model.save_changes()
+        try:
+            await self.model.save_changes()
+        except StateNotSaved as e:
+            pass
 
     def kick_this_client(self, client: "Client"):
         for c in self.clients:
@@ -441,6 +454,7 @@ class RoomController(HasChats):
         self.maps = dict()
         asyncio.create_task(self.load_game())
         asyncio.create_task(self.load_maps())
+        asyncio.create_task(self.when_empty_retire_room())
 
     async def initialized(self):
         while not self.loaded_chat or not self.loaded_game or not self.loaded_maps:
@@ -478,6 +492,24 @@ class RoomController(HasChats):
                 self.maps[m.TrackID] = m
             self.persist_model()
         self.loaded_maps = True
+
+    async def when_empty_retire_room(self):
+        ''' Wait till the room is empty for 30s, and retire it.
+        Initial delay of 60s.
+        '''
+        await asyncio.sleep(60)
+        is_empty = False
+        while self.name in self.lobby_inst.rooms:
+            has_clients = len(self.clients) > 0
+            game_has_clients = self.game is not None and len(self.game.clients) > 0
+            is_empty_now = not has_clients and not game_has_clients
+            if is_empty and is_empty_now:
+                break
+            if is_empty_now:
+                is_empty = is_empty_now
+            await asyncio.sleep(30)
+        # retire
+        self.lobby_inst.retire_room(self)
 
     @property
     def name(self): return self.model.name
@@ -1176,7 +1208,7 @@ class Lobby(HasChats):
 
     async def load_rooms(self):
         with timeit_context("Load Rooms"):
-            rooms = Room.find(GTE(Room.creation_ts, time.time() - 86400), Eq(Room.lobby, self.name), fetch_links=True)
+            rooms = Room.find(Eq(Room.is_retired, False), GTE(Room.creation_ts, time.time() - 86400), Eq(Room.lobby, self.name), fetch_links=True)
             async for room_model in rooms:
                 room = RoomController(room_model, lobby_inst=self)
                 self.rooms[room.name] = room
@@ -1191,14 +1223,19 @@ class Lobby(HasChats):
             for room in self.rooms.values():
                 # clear rooms older than 6 hrs
                 if time.time() > room.model.creation_ts + (60 * 60 * 6):
-                    if room.model.is_open:
-                        room.model.is_open = False
-                        room.persist_model()
-                    self.rooms.pop(room.name)
-                    # del self.rooms[room.name]
-                    log.info(f"Removed room: {room.name}")
+                    self.retire_room(room)
+                    log.info(f"Removed old room: {room.name}")
             # sleep 15 min between loops
             await asyncio.sleep(60 * 15)
+
+    def retire_room(self, room: RoomController):
+        log.info(f"Retiring room: {room.name}")
+        if room.model.is_open:
+            room.model.is_open = False
+            room.model.is_retired = True
+            room.persist_model()
+        if room.name in self.rooms:
+            self.rooms.pop(room.name)
 
     @property
     def json_info(self):

@@ -493,21 +493,26 @@ class RoomController(HasChats):
             self.persist_model()
         self.loaded_maps = True
 
+    @property
+    def is_empty(self):
+        has_clients = len(self.clients) > 0
+        game_has_clients = self.game is not None and len(self.game.clients) > 0
+        return not has_clients and not game_has_clients
+
     async def when_empty_retire_room(self):
         ''' Wait till the room is empty for 30s, and retire it.
         Initial delay of 60s.
         '''
         await asyncio.sleep(60)
-        is_empty = False
         while self.name in self.lobby_inst.rooms:
-            has_clients = len(self.clients) > 0
-            game_has_clients = self.game is not None and len(self.game.clients) > 0
-            is_empty_now = not has_clients and not game_has_clients
-            if is_empty and is_empty_now:
-                break
-            if is_empty_now:
-                is_empty = is_empty_now
-            await asyncio.sleep(30)
+            await asyncio.sleep(1)
+            if not self.is_empty: continue
+            slept = 0
+            while self.is_empty:
+                slept += 0.1
+                await asyncio.sleep(0.1)
+                if not self.is_empty or slept >= 30.0: break
+            if self.is_empty: break
         # retire
         self.lobby_inst.retire_room(self)
 
@@ -1229,6 +1234,8 @@ class Lobby(HasChats):
             await asyncio.sleep(60 * 15)
 
     def retire_room(self, room: RoomController):
+        if room.model.is_retired and room.name not in self.rooms:
+            return
         log.info(f"Retiring room: {room.name}")
         if room.model.is_open:
             room.model.is_open = False

@@ -98,6 +98,7 @@ class Room(HasAdminsModel):
     maps_required: int = Field(default=1)
     min_secs: int = Field(default=15)
     max_secs: int = Field(default=45)
+    max_difficulty: int = Field(default=3)
     map_list: list[int]
     # note: this type signature causes beanie to cast values to strings
     game_opts: dict[str, str] = Field(default_factory=dict)
@@ -486,7 +487,7 @@ class RoomController(HasChats):
             self.maps[m.TrackID] = m
         if maps_needed > 0:
             # log.debug(f"Room asking for {maps_needed} maps.")
-            async for m in RMC.get_some_maps(maps_needed, self.model.min_secs, self.model.max_secs):
+            async for m in RMC.get_some_maps(maps_needed, self.model.min_secs, self.model.max_secs, self.model.max_difficulty):
                 # log.debug(f"Got map: {m.json()}")
                 if (m.id is None):
                     await m.save()
@@ -1415,7 +1416,7 @@ class Lobby(HasChats):
         max_secs = clamp(msg.payload['max_secs'], MIN_SECS, MAX_SECS)
         if (max_secs < min_secs):
             return client.tell_error(f"max map length less than min map length")
-
+        max_difficulty = clamp(msg.payload.get('max_difficulty', 3), 0, 5)
         game_opts: dict = msg.payload.get('game_opts', dict())
         if not isinstance(game_opts, dict): return client.tell_error(f"Invalid format for game_opts.")
         for k,v in game_opts.items():
@@ -1428,7 +1429,7 @@ class Lobby(HasChats):
             is_public=is_public,
             admins=[msg.user],
             maps_required=maps_required,
-            min_secs=min_secs, max_secs=max_secs,
+            min_secs=min_secs, max_secs=max_secs, max_difficulty=max_difficulty,
             game_opts=game_opts,
         )
         # note: will throw if name collision

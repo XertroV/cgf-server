@@ -47,8 +47,30 @@ def tmx_date_to_ts(date_str: str):
     return datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S").timestamp() + float(frac)/1000
 
 
+def difficulty_to_int(d: str) -> int:
+    # d = d.lower()
+    if d == "Beginner": return 0
+    if d == "Intermediate": return 1
+    if d == "Advanced": return 2
+    if d == "Expert": return 3
+    if d == "Lunatic": return 4
+    if d == "Impossible": return 5
+    raise Exception(f"Unknown difficulty: {d}")
+
+def int_to_difficulty(d: int) -> str:
+    if d == 0: return "Beginner"
+    if d == 1: return "Intermediate"
+    if d == 2: return "Advanced"
+    if d == 3: return "Expert"
+    if d == 4: return "Lunatic"
+    if d == 5: return "Impossible"
+    raise Exception(f"Unknown difficulty int: {d}")
+
+
+
 class MapJustID(BaseModel):
     TrackID: int
+
 
 class Map(Document):
     TrackID: Indexed(int, unique=True)
@@ -77,6 +99,7 @@ class Map(Document):
     LengthSecs: Indexed(int)
     LengthEnum: int
     DifficultyName: str
+    DifficultyInt: int | None
     Laps: int
     Comments: str
     Downloadable: bool
@@ -117,6 +140,7 @@ class Map(Document):
         kwargs['LengthEnum'] = length_secs_to_enum(LengthSecs)
         kwargs['UploadTimestamp'] = tmx_date_to_ts(kwargs['UploadedAt'])
         kwargs['UpdateTimestamp'] = tmx_date_to_ts(kwargs['UpdatedAt'])
+        kwargs['DifficultyInt'] = difficulty_to_int(kwargs["DifficultyName"])
         super().__init__(*args, LengthSecs=LengthSecs, LengthName=LengthName, **kwargs)
 
     @property
@@ -129,5 +153,6 @@ class Map(Document):
         fields = ['TrackID', 'Name', 'AuthorTime', 'Tags', 'TypeName', 'StyleName', 'LengthName', 'LengthSecs', 'LengthEnum', 'DifficultyName', 'HasThumbnail']
         for f in fields:
             d[f] = self.__getattribute__(f)
-        d['Name'] = self.GbxMapName
+        if self.GbxMapName != "?":
+            d['Name'] = self.GbxMapName
         return d

@@ -11,7 +11,7 @@ from beanie.operators import In, Eq
 from cgf.consts import LOCAL_DEV_MODE, SERVER_VERSION, SHUTDOWN, SHUTDOWN_EVT
 from cgf.utils import chunk
 from cgf.http import get_session
-from cgf.models.Map import LONG_MAP_SECS, Map, MapJustID
+from cgf.models.Map import LONG_MAP_SECS, Map, MapJustID, difficulty_to_int
 from cgf.db import s3, s3_bucket_name, s3_client
 
 fresh_random_maps: list[Map] = list()
@@ -25,8 +25,19 @@ async def init_known_maps():
     _maps = await Map.find_all(projection_model=MapJustID).to_list()
     known_maps.update([m.TrackID for m in _maps])
     logging.info(f"Known maps: {len(known_maps)}")
+    asyncio.create_task(ensure_known_maps_have_difficulty_int())
     if not LOCAL_DEV_MODE:
         asyncio.create_task(ensure_known_maps_cached())
+
+async def ensure_known_maps_have_difficulty_int():
+    maps = await Map.find(Map.DifficultyInt == None).to_list()
+    for m in maps:
+        if SHUTDOWN: break
+        m.DifficultyInt = difficulty_to_int(m.DifficultyName)
+        await m.save()
+        # logging.info(f"Set map difficulty: {m.TrackID}: {m.DifficultyName} = {m.DifficultyInt}")
+    logging.info(f"Set DifficultyInt on {len(maps)} maps")
+
 
 async def ensure_known_maps_cached():
     log_s3_progress = True
@@ -208,12 +219,13 @@ async def _add_maps_from_json(j: dict, add_to_random_maps = True):
     for i, tid in enumerate(track_ids):
         asyncio.create_task(cache_map(tid, delay_ms=i*100))
 
-async def get_some_maps(n: int, min_secs: int = 0, max_secs: int = LONG_MAP_SECS):
+async def get_some_maps(n: int, min_secs: int = 0, max_secs: int = LONG_MAP_SECS, max_difficulty: int = 5):
     min_secs = max(15, min_secs)
     max_secs = min(LONG_MAP_SECS, max(15, max_secs))
     if min_secs > max_secs: raise Exception(f"min secs > max secs")
     if min_secs % 15 != 0: raise Exception(f"min_secs % 15 != 0: {min_secs}")
     if max_secs % 15 != 0: raise Exception(f"max_secs % 15 != 0: {max_secs}")
+    if 0 > max_difficulty or max_difficulty > 5: raise Exception(f"invalid max difficulty: {max_difficulty}")
     sent = 0
     maps_checked = 0
     while sent < n:
@@ -221,14 +233,16 @@ async def get_some_maps(n: int, min_secs: int = 0, max_secs: int = LONG_MAP_SECS
             await add_more_random_maps(10)
         m = fresh_random_maps.pop()
         maps_checked += 1
-        if min_secs <= m.LengthSecs <= max_secs:
+        length_ok = min_secs <= m.LengthSecs <= max_secs
+        difficulty_ok = max_difficulty >= m.DifficultyInt
+        if length_ok and difficulty_ok:
             yield m
             sent += 1
         if maps_checked > 100:
             break
     nb_required = n - sent
     if nb_required == 0: return
-    extra_ids = await Map.find_many(Map.LengthSecs >= min_secs, Map.LengthSecs <= max_secs, projection_model=MapJustID).to_list()
+    extra_ids = await Map.find_many(Map.LengthSecs >= min_secs, Map.LengthSecs <= max_secs, Map.DifficultyInt <= max_difficulty, projection_model=MapJustID).to_list()
     track_ids = random.choices(extra_ids, k=nb_required)
     for m in await Map.find_many(In(Map.TrackID, track_ids)).to_list():
         yield m

@@ -145,7 +145,7 @@ async def _download_and_cache_map(track_id: int, retry_times=10):
 async def maintain_random_maps():
     while True:
         if len(fresh_random_maps) < MAINTAIN_N_MAPS:
-            await add_more_random_maps(MAINTAIN_N_MAPS - len(fresh_random_maps))
+            await add_more_random_maps(10)
         else:
             await asyncio.sleep(0.1)
 

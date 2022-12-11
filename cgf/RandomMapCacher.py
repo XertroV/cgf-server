@@ -230,7 +230,7 @@ async def get_some_maps(n: int, min_secs: int = 0, max_secs: int = LONG_MAP_SECS
     maps_checked = 0
     while sent < n:
         while len(fresh_random_maps) < n:
-            await add_more_random_maps(10)
+            await add_more_random_maps(25)
         m = fresh_random_maps.pop()
         maps_checked += 1
         length_ok = min_secs <= m.LengthSecs <= max_secs

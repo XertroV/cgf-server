@@ -17,7 +17,7 @@ from beanie.exceptions import StateNotSaved
 import beanie
 
 import cgf.RandomMapCacher as RMC
-from cgf.models.Map import Map
+from cgf.models.Map import Map, difficulty_to_int, int_to_difficulty
 from cgf.User import User
 from cgf.users import gen_join_code, gen_secret, gen_uid, gen_user_uid, get_user, register_authed_user, register_user, authenticate_user, uid_from_wsid
 from cgf.consts import *
@@ -146,6 +146,7 @@ class Room(HasAdminsModel):
             n_maps=self.maps_required,
             min_secs=self.min_secs,
             max_secs=self.max_secs,
+            max_difficulty=int_to_difficulty(self.max_difficulty),
             game_start_time=self.game_start_time,
             started=0 < self.game_start_time < time.time(),
             game_opts=self.game_opts,
@@ -495,6 +496,8 @@ class RoomController(HasChats):
                 self.maps[m.TrackID] = m
             self.persist_model()
         self.loaded_maps = True
+        for client in self.clients:
+            self.tell_maps_loaded_if_loaded(client)
 
     @property
     def is_empty(self):
@@ -503,7 +506,7 @@ class RoomController(HasChats):
         return not has_clients and not game_has_clients
 
     async def when_empty_retire_room(self):
-        ''' Wait till the room is empty for 60s, and retire it.
+        ''' Wait till the room is empty for 120s, and retire it.
         Initial delay of 6s.
         '''
         await asyncio.sleep(6)
@@ -514,7 +517,7 @@ class RoomController(HasChats):
             while self.is_empty:
                 slept += 0.1
                 await asyncio.sleep(0.1)
-                if not self.is_empty or slept >= 60.0: break
+                if not self.is_empty or slept >= 120.0: break
             if self.is_empty: break
         # retire
         self.lobby_inst.retire_room(self)
@@ -530,6 +533,7 @@ class RoomController(HasChats):
         ret = self.model.to_created_room_json
         ret['n_players'] = len(self.clients)
         ret['ready_count'] = self.ready_count
+        ret['maps_loaded'] = self.loaded_maps
         return ret
 
     @property
@@ -587,6 +591,10 @@ class RoomController(HasChats):
     def send_room_info(self, client: "Client"):
         client.write_message("ROOM_INFO", self.to_created_room_json)
 
+    def tell_maps_loaded_if_loaded(self, client: "Client"):
+        if self.loaded_maps:
+            client.write_message("MAPS_LOADED", dict())
+
     def on_client_handed_off(self, client: "Client"):
         self.players_ready.pop(client.user.uid, False)
         self.remove_player_from_teams(client)
@@ -604,6 +612,7 @@ class RoomController(HasChats):
         self.send_admin_mod_status(client)
         self.on_list_teams(client)
         self.tell_player_list(client)
+        self.tell_maps_loaded_if_loaded(client)
         self.clients.add(client)
         self.broadcast_player_joined(client)
         self.lobby_inst.update_room_status(self)
@@ -737,6 +746,8 @@ class RoomController(HasChats):
             team_order = list(range(len(self.teams)))
             random.shuffle(team_order)
             game_model = GameSession(
+                admins=self.model.admins,
+                mods=self.model.mods,
                 players=[c.user for c in self.clients],
                 room=self.name,
                 lobby=self.lobby_inst.name,

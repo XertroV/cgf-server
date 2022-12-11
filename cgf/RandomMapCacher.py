@@ -19,7 +19,7 @@ maps_to_cache: list[Map] = list()
 known_maps: set[int] = set()
 cached_maps: set[int] = set()
 
-MAINTAIN_N_MAPS = 20 if not LOCAL_DEV_MODE else 2  #200
+MAINTAIN_N_MAPS = 200 if not LOCAL_DEV_MODE else 2  #200
 
 async def init_known_maps():
     _maps = await Map.find_all(projection_model=MapJustID).to_list()

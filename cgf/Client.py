@@ -748,7 +748,7 @@ class RoomController(HasChats):
             game_model = GameSession(
                 admins=self.model.admins,
                 mods=self.model.mods,
-                players=[c.user for c in self.clients],
+                players=[c.user for team in self.teams for c in team],
                 room=self.name,
                 lobby=self.lobby_inst.name,
                 teams=[[c.user.uid for c in team] for team in self.teams],
@@ -798,6 +798,18 @@ class GameController(HasChats):
         super().__init__()
         # clients assigned on joining the game
         self.teams = list(list() for _ in model.teams)
+        self.fix_players_order()
+
+    def fix_players_order(self):
+        players = dict()
+        for p in self.model.players:
+            players[p.uid] = p
+        new_players = []
+        for team in self.model.teams:
+            for uid in team:
+                new_players.append(players[uid])
+        self.model.players = new_players
+
 
     def players_team(self, uid: str):
         '''return the team based on a uid. this is NOT accurate when 1 account is running 2 clients.'''

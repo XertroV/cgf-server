@@ -325,7 +325,6 @@ class HasAdmins(HasClients):
 
     def mod_only(f):
         def inner(self: "HasAdmins", client: "Client", msg: Message):
-            log.info(f"Admins: {self.admins}, mods: {self.mods}")
             if not self.is_admin(client.user) and not self.is_mod(client.user):
                 client.tell_warning("Permission denied (Mod only)")
             else:

@@ -277,10 +277,10 @@ class HasAdmins(HasClients):
         self.broadcast_json(msg)
 
     def is_admin(self, user: User):
-        return user in self.admins or any(map(lambda a: a.ref.id == user.id, self.admins))
+        return user.uid in set(a.uid for a in self.admins) #or any(map(lambda a: a.ref.id == user.id, self.admins))
 
     def is_mod(self, user: User):
-        return user in self.mods or any(map(lambda a: a.ref.id == user.id, self.mods))
+        return user.uid in set(m.uid for m in self.mods) #or any(map(lambda a: a.ref.id == user.id, self.mods))
 
     def remove_admin(self, user: User):
         self.admins.remove(user)
@@ -320,15 +320,16 @@ class HasAdmins(HasClients):
             if not self.is_admin(client.user):
                 client.tell_warning("Permission denied (Admin only)")
             else:
-                return f(client, msg)
+                return f(self, client, msg)
         return inner
 
     def mod_only(f):
         def inner(self: "HasAdmins", client: "Client", msg: Message):
+            log.info(f"Admins: {self.admins}, mods: {self.mods}")
             if not self.is_admin(client.user) and not self.is_mod(client.user):
                 client.tell_warning("Permission denied (Mod only)")
             else:
-                return f(client, msg)
+                return f(self, client, msg)
         return inner
 
     @admin_only
@@ -643,7 +644,7 @@ class RoomController(HasChats):
         elif msg.type == "LIST_PLAYERS": self.tell_player_list(client)
         elif msg.type == "MARK_READY": await self.on_mark_ready(client, msg)
         elif msg.type == "LEAVE": return "LEAVE"
-        elif msg.type == "FORCE_START": await self.on_force_start(client, msg)
+        elif msg.type == "FORCE_START": self.on_force_start(client, msg)
         elif msg.type == "JOIN_GAME_NOW": await self.on_join_game_now(client, msg)
 
         # elif msg.type == "": await self.on_join_room(client, msg)
@@ -713,7 +714,7 @@ class RoomController(HasChats):
         self.broadcast_msg(Message(type="PLAYER_READY", payload=dict(uid=client.user.uid, is_ready=self.players_ready[client.user.uid], ready_count=self.ready_count), visibility="global"))
 
     @HasAdmins.mod_only
-    async def on_force_start(self, client: "Client", msg: Message):
+    def on_force_start(self, client: "Client", msg: Message):
         self.on_game_start(forced=True)
 
     game_start_forced = False

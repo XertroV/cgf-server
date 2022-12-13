@@ -680,6 +680,8 @@ class RoomController(HasChats):
 
     def on_list_teams(self, client: "Client", msg: Message = None):
         teams = [[c.user.uid for c in team] for  team in self.teams]
+        if self.game is not None:
+            teams = self.game.model.teams
         client.write_message(type="LIST_TEAMS", payload={'teams': teams}, visibility="global")
         uids = [c.user.uid for c in self.clients]
         ready = [self.players_ready.get(c.user.uid, False) for c in self.clients]
@@ -766,6 +768,8 @@ class RoomController(HasChats):
             if any(len(t) == 0 for t in self.teams):
                 log.warn(f"Refusing to start game b/c a team is empty.")
                 self.abort_game_start()
+                for client in self.clients:
+                    client.tell_warning(f"Cannot start the game because a team is empty.")
                 return
             team_order = list(range(len(self.teams)))
             random.shuffle(team_order)

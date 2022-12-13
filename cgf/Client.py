@@ -596,6 +596,14 @@ class RoomController(HasChats):
         if self.loaded_maps:
             client.write_message("MAPS_LOADED", dict())
 
+    def assign_to_team(self, client: "Client"):
+        _teams = []
+        for i, team in enumerate(self.teams):
+            _teams.append((len(team), i))
+        _teams.sort()
+        team_i = _teams[0][1]
+        self.add_player_to_team(client, team_i)
+
     def on_client_handed_off(self, client: "Client"):
         self.players_ready.pop(client.user.uid, False)
         self.remove_player_from_teams(client)
@@ -613,6 +621,7 @@ class RoomController(HasChats):
         self.send_admin_mod_status(client)
         self.on_list_teams(client)
         self.tell_player_list(client)
+        self.assign_to_team(client)
         self.tell_maps_loaded_if_loaded(client)
         self.clients.add(client)
         self.broadcast_player_joined(client)
@@ -657,6 +666,9 @@ class RoomController(HasChats):
             return
         tn = msg.payload['team_n']
         if tn < 0 or tn >= self.model.n_teams: return client.tell_warning(f"Team {tn+1} does not exist!")
+        self.add_player_to_team(client, tn)
+
+    def add_player_to_team(self, client: "Client", tn: int):
         self.remove_player_from_teams(client)
         self.set_player_ready(client, False)
         self.uid_to_teams[client.user.uid] = tn
@@ -701,10 +713,14 @@ class RoomController(HasChats):
         elif 0 < self.model.game_start_time: # game started
             if self.game_start_forced and not self.is_mod(client.user): return
             # abort start game
-            self.model.game_start_time = -1
-            self.model.is_open = True
-            self.persist_model()
-            self.broadcast_msg(Message(type="GAME_START_ABORT", payload={}))
+            self.abort_game_start()
+
+    def abort_game_start(self):
+        self.model.game_start_time = -1
+        self.model.is_open = True
+        self.persist_model()
+        self.broadcast_msg(Message(type="GAME_START_ABORT", payload={}))
+
 
     def set_player_ready(self, client: "Client", is_ready: bool):
         self.players_ready[client.user.uid] = is_ready
@@ -715,7 +731,10 @@ class RoomController(HasChats):
 
     @HasAdmins.mod_only
     def on_force_start(self, client: "Client", msg: Message):
-        self.on_game_start(forced=True)
+        if any(len(t) == 0 for t in self.teams):
+            client.tell_error(f"Cannot force-start the game while there are empty teams.")
+        else:
+            self.on_game_start(forced=True)
 
     game_start_forced = False
 
@@ -743,7 +762,11 @@ class RoomController(HasChats):
         if not game_started: return
         # this awaits loading our maps if they're not already loaded
         await self.initialized()
-        if self.game is None:
+        if self.game is None and self.has_game_started():
+            if any(len(t) == 0 for t in self.teams):
+                log.warn(f"Refusing to start game b/c a team is empty.")
+                self.abort_game_start()
+                return
             team_order = list(range(len(self.teams)))
             random.shuffle(team_order)
             game_model = GameSession(

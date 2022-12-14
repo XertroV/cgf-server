@@ -19,7 +19,7 @@ maps_to_cache: list[Map] = list()
 known_maps: set[int] = set()
 cached_maps: set[int] = set()
 
-MAINTAIN_N_MAPS = 200 if not LOCAL_DEV_MODE else 2  #200
+MAINTAIN_N_MAPS = 200 if not LOCAL_DEV_MODE else 20  #200
 
 async def init_known_maps():
     _maps = await Map.find_all(projection_model=MapJustID).to_list()
@@ -143,18 +143,32 @@ async def _download_and_cache_map(track_id: int, retry_times=10):
 
 
 async def maintain_random_maps():
+    asyncio.create_task(maintain_random_maps_slow())
     while True:
         if len(fresh_random_maps) < MAINTAIN_N_MAPS:
             await add_more_random_maps(10)
         else:
             await asyncio.sleep(0.1)
 
+lastFRM = 0
+
+async def maintain_random_maps_slow():
+    global lastFRM
+    while True:
+        if len(fresh_random_maps) < MAINTAIN_N_MAPS * 10:
+            await add_more_random_maps(1)
+            currFRM = len(fresh_random_maps)
+            if currFRM % 10 == 0:
+                logging.info(f"Fresh random maps: {currFRM}")
+        else:
+            await asyncio.sleep(2)
+
 async def add_more_random_maps(n: int):
     if (n > 100): raise Exception(f"too many maps requested: {n}")
-    logging.info(f"Fetching {n} random maps")
+    if (n > 1): logging.info(f"Fetching {n} random maps")
     if n <= 0: return
     await asyncio.wait([_add_a_random_map(delay = i * 0.1) for i in range(n)])
-    logging.info(f"Fetched {n} random maps")
+    if (n > 1): logging.info(f"Fetched {n} random maps")
 
 async def _add_a_random_map(delay = 0):
     if delay > 0: await asyncio.sleep(delay)

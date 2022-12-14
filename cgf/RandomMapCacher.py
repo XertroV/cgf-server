@@ -160,8 +160,7 @@ async def maintain_random_maps_slow():
             currFRM = len(fresh_random_maps)
             if currFRM % 10 == 0:
                 logging.info(f"Fresh random maps: {currFRM}")
-        else:
-            await asyncio.sleep(2)
+        await asyncio.sleep(2)
 
 async def add_more_random_maps(n: int):
     if (n > 100): raise Exception(f"too many maps requested: {n}")

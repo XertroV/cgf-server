@@ -167,8 +167,11 @@ async def add_more_random_maps(n: int):
     if (n > 100): raise Exception(f"too many maps requested: {n}")
     if (n > 1): logging.info(f"Fetching {n} random maps")
     if n <= 0: return
-    await asyncio.wait([_add_a_random_map(delay = i * 0.1) for i in range(n)])
-    if (n > 1): logging.info(f"Fetched {n} random maps")
+    try:
+        await asyncio.wait([_add_a_random_map(delay = i * 0.1) for i in range(n)])
+        if (n > 1): logging.info(f"Fetched {n} random maps")
+    except Exception as e:
+        logging.warn(f"Exception getting random maps (passing over): {e}")
 
 async def _add_a_random_map(delay = 0):
     if delay > 0: await asyncio.sleep(delay)

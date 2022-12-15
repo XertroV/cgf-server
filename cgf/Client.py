@@ -563,7 +563,7 @@ class RoomController(HasChats):
         if len(self.clients) >= self.model.player_limit:
             client.tell_info(f"Sorry, the room is full.")
             return
-        if self.has_game_started() and not self.game.includes_player(client.user.uid):
+        if self.has_game_started() and self.game is not None and not self.game.includes_player(client.user.uid):
             client.tell_info(f"Sorry, the game has already started with other players.")
             return
         # todo if game has started
@@ -620,9 +620,9 @@ class RoomController(HasChats):
         self.send_admin_mod_status(client)
         self.on_list_teams(client)
         self.tell_player_list(client)
-        self.assign_to_team(client)
         self.tell_maps_loaded_if_loaded(client)
         self.clients.add(client)
+        self.assign_to_team(client)
         self.broadcast_player_joined(client)
         self.lobby_inst.update_room_status(self)
 
@@ -709,9 +709,10 @@ class RoomController(HasChats):
     def check_game_start_abort(self, client: "Client"):
         everyone_ready = self.ready_count == len(self.clients)
         teams_populated = all(len(team) > 0 for team in self.teams)
+        # log.debug(f"Check game start/abort: {dict(everyone_ready=everyone_ready, teams_populated=teams_populated, game_start=self.model.game_start_time)}")
         if everyone_ready and teams_populated and 0 > self.model.game_start_time:
             self.on_game_start()
-        elif 0 < self.model.game_start_time: # game started
+        elif not (everyone_ready and teams_populated) and 0 < self.model.game_start_time and not self.has_game_started(): # game started
             if self.game_start_forced and not self.is_mod(client.user): return
             # abort start game
             self.abort_game_start()
@@ -724,6 +725,7 @@ class RoomController(HasChats):
 
 
     def set_player_ready(self, client: "Client", is_ready: bool):
+        # log.debug(f"Setting player {client.user.uid} ready: {is_ready}")
         self.players_ready[client.user.uid] = is_ready
         self.ready_count = sum(1 if self.players_ready.get(c.user.uid, False) else 0 for c in self.clients)
 

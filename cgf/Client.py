@@ -1454,6 +1454,14 @@ class Lobby(HasChats):
             l.json_info for l in all_lobbies.values()
         )))
 
+    def fix_game_opts(self, go):
+        if '1st_round_for_center' not in go:
+            go['1st_round_for_center'] = False
+        if 'cannot_repick' not in go:
+            go['cannot_repick'] = False
+        if 'reveal_maps' not in go:
+            go['reveal_maps'] = False
+
     async def on_create_room(self, client: Client, msg: Message):
         # incoming: {name: string, player_limit: int, n_teams: int}
         name = str(msg.payload['name']) + "##"+gen_uid(4)
@@ -1470,6 +1478,7 @@ class Lobby(HasChats):
             return client.tell_error(f"max map length less than min map length")
         max_difficulty = clamp(msg.payload.get('max_difficulty', 3), 0, 5)
         game_opts: dict = msg.payload.get('game_opts', dict())
+        self.fix_game_opts(game_opts)
         if not isinstance(game_opts, dict): return client.tell_error(f"Invalid format for game_opts.")
         for k,v in game_opts.items():
             if not isinstance(k, str) or isinstance(v, dict) or isinstance(v, list):

@@ -495,9 +495,14 @@ class RoomController(HasChats):
                 self.model.map_list.append(m.TrackID)
                 self.maps[m.TrackID] = m
             self.persist_model()
-        self.loaded_maps = True
-        for client in self.clients:
-            self.tell_maps_loaded_if_loaded(client)
+        if len(self.model.map_list) < self.model.maps_required:
+            await self.load_maps()
+        else:
+            if self.game is not None:
+                self.game.model.map_list = self.model.map_list
+            self.loaded_maps = True
+            for client in self.clients:
+                self.tell_maps_loaded_if_loaded(client)
 
     @property
     def is_empty(self):
@@ -815,7 +820,7 @@ class GameController(HasChats):
 
     @property
     def get_maps_list_full_for_info(self):
-        return [self.room.maps[tid].safe_json_shorter for tid in self.model.map_list]
+        return [self.room.maps[tid].safe_json_shorter for tid in self.room.model.map_list]
 
     @property
     def name(self):

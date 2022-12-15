@@ -21,6 +21,9 @@ cached_maps: set[int] = set()
 
 MAINTAIN_N_MAPS = 200 if not LOCAL_DEV_MODE else 20  #200
 
+def rm_query_args():
+    return [Map.Downloadable == True, Map.Unreleased == False, Map.Unlisted == False]
+
 async def init_known_maps():
     _maps = await Map.find_all(projection_model=MapJustID).to_list()
     known_maps.update([m.TrackID for m in _maps])
@@ -180,7 +183,7 @@ async def _add_a_random_map(delay = 0):
                 await _add_maps_from_json(await resp.json())
             else:
                 logging.warning(f"Could not get random map: {resp.status} code. TMX might be down. Adding some random maps from the DB.")
-                maps = await Map.find_all(projection_model=MapJustID).to_list()
+                maps = await Map.find(*rm_query_args(), projection_model=MapJustID).to_list()
                 new_maps = []
                 for _ in range(20):
                     new_maps.append(random.choice(maps))
@@ -220,8 +223,9 @@ async def _add_maps_from_json(j: dict, add_to_random_maps = True):
             continue
         map_in_db = await Map.find_one(Eq(Map.TrackID, track_id))
         if map_in_db is not None:
-            # todo: check for update?
-            _map = map_in_db
+            _map.id = map_in_db.id
+            await _map.replace()
+            logging.warn(f"Replacing map in db: {_map.TrackID}")
         else:
             await _map.save()  # using insert_many later doesn't populate .id
         if add_to_random_maps:
@@ -258,7 +262,7 @@ async def get_some_maps(n: int, min_secs: int = 0, max_secs: int = LONG_MAP_SECS
             break
     nb_required = n - sent
     if nb_required == 0: return
-    extra_ids = await Map.find_many(Map.LengthSecs >= min_secs, Map.LengthSecs <= max_secs, Map.DifficultyInt <= max_difficulty, projection_model=MapJustID).to_list()
+    extra_ids = await Map.find_many(Map.LengthSecs >= min_secs, Map.LengthSecs <= max_secs, Map.DifficultyInt <= max_difficulty, *rm_query_args(), projection_model=MapJustID).to_list()
     track_ids = random.choices(extra_ids, k=nb_required)
     for m in await Map.find_many(In(Map.TrackID, track_ids)).to_list():
         yield m

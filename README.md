@@ -2,6 +2,10 @@
 
 `find . | entr -r poetry run python main.py`
 
+todo:
+- rejoin will interfere with a player changing game (same account, diff game).
+  - mb introduce a 'game code' on login that determines if we rejoin or not.
+
 ## notes:
 
 - very simple architecture

@@ -1162,6 +1162,7 @@ class Client:
                 # update this in case the user updated their account name
                 user.name = tokenInfo.display_name
                 if user is not None:
+                    await user.set({User.last_seen: time.time(), User.n_logins: user.n_logins + 1})
                     self.write_json(dict(type="LOGGED_IN", uid=user.uid, account_id=tokenInfo.account_id, display_name=tokenInfo.display_name))
         if ENABLE_LEGACY_AUTH and msg.type == "LOGIN":
             user = authenticate_user(msg['uid'], msg['username'], msg['secret'])

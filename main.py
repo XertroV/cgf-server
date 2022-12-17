@@ -19,7 +19,12 @@ from cgf.models.Map import Map
 from cgf.users import all_users
 from cgf.db import db
 from cgf.utils import timeit_context
-log.basicConfig(level=log.DEBUG)
+# log.basicConfig(level=log.DEBUG)
+log.basicConfig(
+    format='%(asctime)s [%(levelname)-8s] %(message)s',
+    level=log.DEBUG,
+    datefmt='%Y-%m-%d %H:%M:%S')
+
 log.getLogger('boto').setLevel(log.WARNING)
 log.getLogger('boto3').setLevel(log.WARNING)
 log.getLogger('boto3.resources.factory').setLevel(log.WARNING)

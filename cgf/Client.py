@@ -148,6 +148,7 @@ class Room(HasAdminsModel):
             min_secs=self.min_secs,
             max_secs=self.max_secs,
             max_difficulty=int_to_difficulty(self.max_difficulty),
+            map_pack=self.map_pack,
             game_start_time=self.game_start_time,
             started=0 < self.game_start_time < time.time(),
             game_opts=self.game_opts,

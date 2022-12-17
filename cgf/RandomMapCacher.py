@@ -226,7 +226,7 @@ async def _add_maps_from_json(j: dict, add_to_random_maps = True):
         if map_in_db is not None:
             _map.id = map_in_db.id
             await _map.replace()
-            logging.warn(f"Replacing map in db: {_map.TrackID}")
+            logging.info(f"Replacing map in db: {_map.TrackID}")
         else:
             await _map.save()  # using insert_many later doesn't populate .id
         if add_to_random_maps:

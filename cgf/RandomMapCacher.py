@@ -9,6 +9,7 @@ import aiohttp
 from beanie.operators import In, Eq
 
 from cgf.consts import LOCAL_DEV_MODE, SERVER_VERSION, SHUTDOWN, SHUTDOWN_EVT
+from cgf.models.MapPack import MapPack
 from cgf.utils import chunk
 from cgf.http import get_session
 from cgf.models.Map import LONG_MAP_SECS, Map, MapJustID, difficulty_to_int
@@ -266,3 +267,77 @@ async def get_some_maps(n: int, min_secs: int = 0, max_secs: int = LONG_MAP_SECS
     track_ids = random.choices(extra_ids, k=nb_required)
     for m in await Map.find_many(In(Map.TrackID, track_ids)).to_list():
         yield m
+
+cached_map_packs: set[int] = set()
+
+async def get_map_pack(id: int, count: int = 0):
+    async with get_session() as session:
+        async with session.get(f"https://trackmania.exchange/api/mappack/get_info/{id}") as resp:
+            if resp.status == 200:
+                return await resp.json()
+            else:
+                logging.warn(f"Request to get map pack failed with status: {resp.status} and body {resp._body}")
+                if count > 10:
+                    raise Exception(f'Cannot get map pack {id} -- too many retries')
+                await asyncio.sleep(3.0)
+                return await get_map_pack(id, count + 1)
+
+async def get_map_pack_tracks(id: int, count: int = 0):
+    async with get_session() as session:
+        async with session.get(f"https://trackmania.exchange/api/mappack/get_mappack_tracks/{id}") as resp:
+            if resp.status == 200:
+                return await resp.json()
+            else:
+                logging.warn(f"Request to get map pack failed with status: {resp.status} and body {resp._body}")
+                if count > 10:
+                    raise Exception(f'Cannot get map pack tracks {id} -- too many retries')
+                await asyncio.sleep(3.0)
+                return await get_map_pack_tracks(id, count + 1)
+
+async def get_maps_from_map_pack(maps_needed: int, id: int):
+    mp = await MapPack.find_one(MapPack.ID == id)
+    if id not in cached_map_packs:
+        data = await get_map_pack(id)
+        _mp = None
+        # error if these keys exist
+        if 'StatusCode' not in data and 'Message' not in data:
+            _mp = MapPack(**data)
+        if mp is None and _mp is not None:
+            await _mp.insert()
+        else:
+            _mp.id = mp.id
+            await _mp.replace()
+        mp = _mp
+        if mp is not None:
+            if mp.Tracks is None:
+                mp.Tracks = list()
+            tracks = await get_map_pack_tracks(id)
+            await _add_maps_from_json(dict(results=tracks), False)
+            for track in tracks:
+                tid = track['TrackID']
+                if tid not in mp.Tracks:
+                    mp.Tracks.append(tid)
+            logging.info(f"Cached map pack with {len(mp.Tracks)} maps.")
+            await mp.save()
+            cached_map_packs.add(id)
+            asyncio.create_task(uncache_map_pack_in(id, 60 * 60 * 6))
+    provided = 0
+    if mp is not None:
+        maps = await Map.find_many(In(Map.TrackID, mp.Tracks)).to_list()
+        while provided < maps_needed:
+            random.shuffle(maps)
+            for m in maps:
+                provided += 1
+                yield m
+                if provided >= maps_needed:
+                    break
+    else:
+        async for m in get_some_maps(maps_needed, 0, 60, 2):
+            yield m
+
+
+# cache for 6 hrs
+async def uncache_map_pack_in(id, delay = 60 * 60 * 6):
+    await asyncio.sleep(delay)
+    if id in cached_map_packs:
+        cached_map_packs.remove(id)

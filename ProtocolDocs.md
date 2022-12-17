@@ -100,6 +100,9 @@ PLAYER_JOINED, etc
 
 |n| 3 | G_xxxxxxxx | `any & {payload: {seq: int}}` | broadcasted game messages from other clients; can be scoped via visibility. seq is the sequence number. |
 
+|n| 3 | GM_xxxxxxxx | `any & {payload: {seq: int}}` | a message from the 'game master' (server). this is entered into the game log. |
+|n| 3 | GM_PLAYER_LEFT | `{seq: int}` | a message from the 'game master' (server). this is entered into the game log. |
+
 ### to server
 
 |n| 3 | G_xxxxxxxx | any | game messages -- they will be broadcast to clients and should be handled by the game engine. global -> all players. team -> players on that team. map -> players on that map. |

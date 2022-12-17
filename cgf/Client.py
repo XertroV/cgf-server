@@ -96,6 +96,7 @@ class Room(HasAdminsModel):
     players: list[Link[User]] = Field(default_factory=list)
     n_teams: int
     maps_required: int = Field(default=1)
+    map_pack: int | None = None
     min_secs: int = Field(default=15)
     max_secs: int = Field(default=45)
     max_difficulty: int = Field(default=3)
@@ -487,8 +488,12 @@ class RoomController(HasChats):
         for m in existing_maps:
             self.maps[m.TrackID] = m
         if maps_needed > 0:
+            # todo: do we have a map pack?
+            map_gen = RMC.get_maps_from_map_pack(maps_needed, self.model.map_pack) \
+                if self.model.map_pack is not None \
+                else RMC.get_some_maps(maps_needed, self.model.min_secs, self.model.max_secs, self.model.max_difficulty)
             # log.debug(f"Room asking for {maps_needed} maps.")
-            async for m in RMC.get_some_maps(maps_needed, self.model.min_secs, self.model.max_secs, self.model.max_difficulty):
+            async for m in map_gen:
                 # log.debug(f"Got map: {m.json()}")
                 if (m.id is None):
                     await m.save()
@@ -885,8 +890,23 @@ class GameController(HasChats):
     def send_maps_info_full(self, client: "Client"):
         client.write_message("MAPS_INFO_FULL", dict(maps=self.get_maps_list_full_for_info))
 
+    def broadcast_gm_player_joined(self, client):
+        msg = Message(type="GM_PLAYER_JOINED", payload=client.user.safe_json)
+        asyncio.create_task(self.save_and_bcast_game_msg(msg))
+
+    def broadcast_gm_player_left(self, client):
+        msg = Message(type="GM_PLAYER_LEFT", payload=client.user.safe_json)
+        asyncio.create_task(self.save_and_bcast_game_msg(msg))
+
+    async def save_and_bcast_game_msg(self, msg: Message):
+        await msg.save()
+        self.broadcast_game_msg(msg)
+        self.append_game_msg(msg)
+
+
     def on_client_handed_off(self, client: "Client"):
         self.broadcast_player_left(client)
+        self.broadcast_gm_player_left(client)
         if client in self.clients:
             self.clients.remove(client)
 
@@ -903,6 +923,7 @@ class GameController(HasChats):
         self.assign_player_to_team(client)
         self.broadcast_player_joined(client)
         self.replay_game_so_far(client)
+        self.broadcast_gm_player_joined(client)
 
     def on_client_left(self, client: "Client"):
         self.on_client_handed_off(client)
@@ -947,8 +968,11 @@ class GameController(HasChats):
         elif msg.type in self.vote_msg_types: await self.on_map_vote_msg(client, msg)
         else: is_game_msg = False
         if is_game_msg:
-            self.model.game_msgs.append(msg)
-            self.persist_model()
+            self.append_game_msg(msg)
+
+    def append_game_msg(self, msg: Message):
+        self.model.game_msgs.append(msg)
+        self.persist_model()
 
     async def on_game_msg(self, client: "Client", msg: Message):
         # todo: visibility stuff
@@ -1483,6 +1507,7 @@ class Lobby(HasChats):
         if (max_secs < min_secs):
             return client.tell_error(f"max map length less than min map length")
         max_difficulty = clamp(msg.payload.get('max_difficulty', 3), 0, 5)
+        map_pack = msg.payload.get('map_pack', None)
         game_opts: dict = msg.payload.get('game_opts', dict())
         self.fix_game_opts(game_opts)
         if not isinstance(game_opts, dict): return client.tell_error(f"Invalid format for game_opts.")
@@ -1495,7 +1520,7 @@ class Lobby(HasChats):
             player_limit=player_limit, n_teams=n_teams,
             is_public=is_public,
             admins=[msg.user],
-            maps_required=maps_required,
+            maps_required=maps_required, map_pack=map_pack,
             min_secs=min_secs, max_secs=max_secs, max_difficulty=max_difficulty,
             game_opts=game_opts,
         )

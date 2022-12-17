@@ -12,6 +12,7 @@ import threading
 from cgf.Client import Client, ChatMessages, Lobby, LobbyModel, Message, Room, GameSession, get_main_lobby, all_clients, populate_all_lobbies, all_lobbies
 import cgf.RandomMapCacher as RMC
 from cgf.User import User
+from cgf.models.MapPack import MapPack
 from cgf.users import all_users
 from cgf.consts import SERVER_VERSION, SHUTDOWN, SHUTDOWN_EVT
 from cgf.models.Map import Map
@@ -70,7 +71,7 @@ async def main():
             User, Message, LobbyModel,
             ChatMessages,
             Room, GameSession,
-            Map
+            Map, MapPack,
         ], allow_index_dropping=True)
     with timeit_context("Load all users"):
         async for user in User.find_all():

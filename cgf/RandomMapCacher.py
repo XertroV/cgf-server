@@ -191,7 +191,7 @@ async def _add_a_random_map(delay = 0):
                         new_maps.append(random.choice(maps))
                     maps = await Map.find_many(In(Map.TrackID, new_maps)).to_list()
                     fresh_random_maps.extend(maps)
-        except TimeoutError as e:
+        except asyncio.TimeoutError as e:
             logging.warning(f"TMX timeout for random maps")
 
 async def _add_a_specific_map(track_id: int):

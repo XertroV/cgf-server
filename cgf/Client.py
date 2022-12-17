@@ -972,6 +972,7 @@ class GameController(HasChats):
             self.append_game_msg(msg)
 
     def append_game_msg(self, msg: Message):
+        log.info(f"[Game: {self.name} / {self.room.name}; msg.type={msg.type}")
         self.model.game_msgs.append(msg)
         self.persist_model()
 

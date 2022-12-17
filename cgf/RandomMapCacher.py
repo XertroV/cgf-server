@@ -179,17 +179,20 @@ async def add_more_random_maps(n: int):
 async def _add_a_random_map(delay = 0):
     if delay > 0: await asyncio.sleep(delay)
     async with get_session() as session:
-        async with session.get(f"https://trackmania.exchange/mapsearch2/search?api=on&random=1", timeout=10.0) as resp:
-            if resp.status == 200:
-                await _add_maps_from_json(await resp.json())
-            else:
-                logging.warning(f"Could not get random map: {resp.status} code. TMX might be down. Adding some random maps from the DB.")
-                maps = await Map.find(*rm_query_args(), projection_model=MapJustID).to_list()
-                new_maps = []
-                for _ in range(20):
-                    new_maps.append(random.choice(maps))
-                maps = await Map.find_many(In(Map.TrackID, new_maps)).to_list()
-                fresh_random_maps.extend(maps)
+        try:
+            async with session.get(f"https://trackmania.exchange/mapsearch2/search?api=on&random=1", timeout=5.0) as resp:
+                if resp.status == 200:
+                    await _add_maps_from_json(await resp.json())
+                else:
+                    logging.warning(f"Could not get random map: {resp.status} code. TMX might be down. Adding some random maps from the DB.")
+                    maps = await Map.find(*rm_query_args(), projection_model=MapJustID).to_list()
+                    new_maps = []
+                    for _ in range(20):
+                        new_maps.append(random.choice(maps))
+                    maps = await Map.find_many(In(Map.TrackID, new_maps)).to_list()
+                    fresh_random_maps.extend(maps)
+        except TimeoutError as e:
+            logging.warning(f"TMX timeout for random maps")
 
 async def _add_a_specific_map(track_id: int):
     async with get_session() as session:
@@ -259,12 +262,13 @@ async def get_some_maps(n: int, min_secs: int = 0, max_secs: int = LONG_MAP_SECS
         if length_ok and difficulty_ok:
             yield m
             sent += 1
-        if maps_checked > 100:
+        if maps_checked > 25:
             break
     nb_required = n - sent
     if nb_required == 0: return
     extra_ids = await Map.find_many(Map.LengthSecs >= min_secs, Map.LengthSecs <= max_secs, Map.DifficultyInt <= max_difficulty, *rm_query_args(), projection_model=MapJustID).to_list()
     track_ids = random.choices(extra_ids, k=nb_required)
+    logging.info(f"Selecting {len(track_ids)} extra maps from DB.")
     for m in await Map.find_many(In(Map.TrackID, track_ids)).to_list():
         yield m
 

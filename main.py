@@ -50,6 +50,7 @@ def cleanup_clients(*args):
     SHUTDOWN = True
     SHUTDOWN_EVT.set()
     _clients = list(all_clients)
+    log.warning(f"Shutting down")
     for client in _clients:
         log.info(f"Disconnecting client: {client.client_ip}")
         client.disconnect()
@@ -123,6 +124,9 @@ async def main():
     server = await asyncio.start_server(connection_cb, HOST_NAME, TCP_PORT)
     async with server:
         await server.serve_forever()
+
+    cleanup_clients()
+
 
 
 async def connection_cb(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):

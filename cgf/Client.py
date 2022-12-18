@@ -1,6 +1,7 @@
 import asyncio
 import json
-from logging import debug, warn, warning, info
+# from logging import debug, warn, warning, info
+import logging
 import os
 import random
 import struct
@@ -271,7 +272,7 @@ class HasAdmins(HasClients):
                 mods=[u.uid for u in self.mods])
             return pl
         except Exception as e:
-            warning(f"Exception during admins_mods_payload: {e}\n{''.join(traceback.format_exception(e))}")
+            logging.warning(f"Exception during admins_mods_payload: {e}\n{''.join(traceback.format_exception(e))}")
             return dict(admins=list(), mods=list())
 
     def broadcast_new_admins_mods(self):
@@ -568,7 +569,7 @@ class RoomController(HasChats):
             client.tell_error(f"You can't join again because you were already kicked.")
             return
         if client in self.clients:
-            warn(f"I already have client: {client}")
+            logging.warn(f"I already have client: {client}")
             client.tell_warning("Tried to join room twice. This is probably a bug.")
             return
         if len(self.clients) >= self.model.player_limit:
@@ -584,7 +585,7 @@ class RoomController(HasChats):
                 await self.on_join_game_now(client, None)
             await self.run_client(client)
         except Exception as e:
-            warning(f"[{client.client_ip}] Disconnecting: Exception during Room.run_client: {e}\n{''.join(traceback.format_exception(e))}")
+            logging.warning(f"[{client.client_ip}] Disconnecting: Exception during Room.run_client: {e}\n{''.join(traceback.format_exception(e))}")
             client.tell_error("Unknown server error.")
             # client.disconnect()
         self.on_client_handed_off(client)
@@ -866,14 +867,14 @@ class GameController(HasChats):
             client.tell_error(f"You can't join again because you were already kicked.")
             return
         if client in self.clients:
-            warn(f"I already have client: {client}")
+            logging.warn(f"I already have client: {client}")
             client.tell_warning("Tried to join room twice. This is probably a bug.")
             return
         self.on_client_entered(client)
         try:
             await self.run_client(client)
         except Exception as e:
-            warning(f"[{client.client_ip}] Disconnecting: Exception during GameController.run_client: {e}\n{''.join(traceback.format_exception(e))}")
+            logging.warning(f"[{client.client_ip}] Disconnecting: Exception during GameController.run_client: {e}\n{''.join(traceback.format_exception(e))}")
             client.tell_error("Unknown server error.")
         self.on_client_handed_off(client)
 
@@ -1066,7 +1067,7 @@ class Client:
             if reader_ex is None:
                 bs = await self.reader.read(2)
             if (bs is None or len(bs) != 2):
-                info(f"Client disconnected?? -- Maybe Reader Exception? e:{reader_ex}")
+                logging.info(f"Client disconnected?? -- Maybe Reader Exception? e:{reader_ex}")
                 self.disconnect()
                 return None
             msg_len, = struct.unpack_from('<H', bs)
@@ -1077,13 +1078,13 @@ class Client:
             if self.user is not None:
                 self.user.last_seen = time.time()
             if incoming == "END":
-                info(f"Client disconnecting: {self.client_ip}")
+                logging.info(f"Client disconnecting: {self.client_ip}")
                 self.disconnect()
                 return None
             if incoming == "PING": # skip pings
                 if self.user is not None:
                     pass
-                    # info(f"Got ping from user: {self.user.name} / {self.user.uid}")
+                    # logging.info(f"Got ping from user: {self.user.name} / {self.user.uid}")
                 return None
             return incoming
         except Exception as e:
@@ -1138,9 +1139,9 @@ class Client:
                 await self.init_client()
         except Exception as e:
             self.tell_error(f"Exception: {e}")
-            warn(f"[Client:{self.client_ip}] Got exception: {e}, \n{''.join(traceback.format_exception(e))}")
+            logging.warn(f"[Client:{self.client_ip}] Got exception: {e}, \n{''.join(traceback.format_exception(e))}")
         if self.user is None:
-            warn(f"Failed to init for {self.client_ip} -- bailing")
+            logging.warn(f"Failed to init for {self.client_ip} -- bailing")
         else:
             # rejoin
             lobby_name = None
@@ -1212,15 +1213,15 @@ class Client:
         self.user = user
 
     def tell_error(self, msg: str):
-        warn(f"[Client:{self.client_ip}] Sending error to client: {msg}")
+        logging.warn(f"[Client:{self.client_ip}] Sending error to client: {msg}")
         self.write_json({"error": msg})
 
     def tell_warning(self, msg: str):
-        warn(f"[Client:{self.client_ip}] Sending warning to client: {msg}")
+        logging.info(f"[Client:{self.client_ip}] Sending warning to client: {msg}")
         self.write_json({"warning": msg})
 
     def tell_info(self, msg: str):
-        warn(f"[Client:{self.client_ip}] Sending info to client: {msg}")
+        logging.info(f"[Client:{self.client_ip}] Sending info to client: {msg}")
         self.write_json({"info": msg})
 
     def validate_pl(self, pl: dict) -> Message:
@@ -1348,14 +1349,14 @@ class Lobby(HasChats):
 
     async def handoff(self, client: Client, lobby_name: str = None, room_name: str = None, game_name: str = None):
         if client in self.clients:
-            warn(f"I already have client: {client}")
+            logging.warn(f"I already have client: {client}")
             client.tell_warning("Tried to join lobby twice. This is probably a server bug.")
             return
         self.on_client_entered(client)
         all_clients.add(client)
         await self.initialized()
         # self.tell_client_curr_scope(client)
-        info(f"Running client: {client.client_ip}")
+        logging.info(f"Running client: {client.client_ip}")
         try:
             if lobby_name is not None and lobby_name != self.name:
                 await self.handoff_to_game_lobby(client, await get_named_lobby(lobby_name), room_name=room_name, game_name=game_name)
@@ -1364,7 +1365,7 @@ class Lobby(HasChats):
                     await self.handoff_to_room(client, self.rooms[room_name], game_name=game_name)
             await self.run_client(client)
         except Exception as e:
-            warning(f"[{client.client_ip}] Disconnecting: Exception during run_client: {e}\n{''.join(traceback.format_exception(e))}")
+            logging.warning(f"[{client.client_ip}] Disconnecting: Exception during run_client: {e}\n{''.join(traceback.format_exception(e))}")
             client.disconnect()
         self.on_client_handed_off(client)
 
@@ -1545,8 +1546,8 @@ class Lobby(HasChats):
             await self.handoff_to_room(client, room)
 
     async def on_join_code(self, client: Client, msg: Message):
-        code = msg.payload.get('code', None)
-        room_model = None if code is None else await Room.find_one({'join_code': code})
+        code: str = msg.payload.get('code', None)
+        room_model = None if code is None else await Room.find_one({'join_code': code.upper()})
         room = None if room_model is None else self.rooms.get(room_model.name, None)
         if room is None:
             client.tell_warning(f"Cannot find room with join code: {code}")

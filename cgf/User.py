@@ -1,5 +1,4 @@
 import asyncio
-from logging import warning
 import time
 
 import pymongo
@@ -30,7 +29,7 @@ class User(Document):
 
     @property
     def unsafe_json(self):
-        warning(f"json: {self.json()}")
+        # warning(f"json: {self.json()}")
         d = self.safe_json
         d.update(dict(secret=self.secret))
         return d

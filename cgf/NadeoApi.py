@@ -152,6 +152,7 @@ MAP_INFO_BY_UID_URL = "https://prod.trackmania.core.nadeo.online/maps/?mapUidLis
 
 ''' wait for up to 2 minutes for maps to be uploaded '''
 async def await_maps_uploaded(mapUids: list[str]):
+    await await_nadeo_services_initialized()
     mapsNotUploaded = set(mapUids)
     counter = 0
     logging.info(f"Awaiting map uploads: {len(mapsNotUploaded)} : {mapsNotUploaded}")
@@ -178,6 +179,7 @@ async def await_maps_uploaded(mapUids: list[str]):
 
 CREATE_ROOM_URL = f"https://live-services.trackmania.nadeo.live/api/token/club/{TTG_CLUB_ID}/room/create"
 DELETE_ROOM_URL = lambda activityId: f"https://live-services.trackmania.nadeo.live/api/token/club/{TTG_CLUB_ID}/activity/{activityId}/delete"
+GET_ROOM_URL = lambda activityId: f"https://live-services.trackmania.nadeo.live/api/token/club/{TTG_CLUB_ID}/room/{activityId}"
 GET_PASSWORD_URL = lambda activityId: f"https://live-services.trackmania.nadeo.live/api/token/club/{TTG_CLUB_ID}/room/{activityId}/get-password"
 POST_JOIN_URL = lambda activityId: f"https://live-services.trackmania.nadeo.live/api/token/club/{TTG_CLUB_ID}/room/{activityId}/join"
 
@@ -188,6 +190,7 @@ POST_JOIN_URL = lambda activityId: f"https://live-services.trackmania.nadeo.live
 '''
 
 async def create_club_room(name: str, mapUids=list[str], region: str = "eu-west", scalable=0, password=0, maxPlayers=64, script="TrackMania/TM_TimeAttack_Online.Script.txt", settings=None):
+    await await_nadeo_services_initialized()
     valid_regions = ["eu-west", "ca-central"]
     if region not in valid_regions:
         region = valid_regions[0]
@@ -221,16 +224,27 @@ async def create_club_room(name: str, mapUids=list[str], region: str = "eu-west"
             data['password'] = pwData['password']
             return data
 
+async def get_club_room(activityId: int):
+    await await_nadeo_services_initialized()
+    async with get_live_session() as session:
+        async with session.post(GET_ROOM_URL(activityId)) as resp:
+            if not resp.ok:
+                logging.warn(f"Error getting club room {activityId}; {resp.status}, {await resp.content.read()}")
+            else:
+                return await resp.json()
+
 async def delete_club_room(activityId: int):
+    await await_nadeo_services_initialized()
     async with get_live_session() as session:
         async with session.post(DELETE_ROOM_URL(activityId)) as resp:
             if not resp.ok:
-                logging.warn(f"Error creating club room; {resp.status}, {await resp.content.read()}")
+                logging.warn(f"Error deleting club room {activityId}; {resp.status}, {await resp.content.read()}")
             else:
                 logging.info(f"Deleted activity: {activityId}")
 
 
 async def join_club_room(activityId: int):
+    await await_nadeo_services_initialized()
     async with get_live_session() as session:
         async with session.post(POST_JOIN_URL(activityId)) as resp:
             if not resp.ok:
@@ -238,8 +252,7 @@ async def join_club_room(activityId: int):
             else:
                 data: dict = await resp.json()
                 logging.debug(f"Join link data: {data}")
-                if not data.get('starting', True):
-                    return data['joinLink']
+                return data
 
 async def await_join_club_room(activityId: int):
         count = 0
@@ -247,9 +260,9 @@ async def await_join_club_room(activityId: int):
             if count > 0:
                 await asyncio.sleep(1.75)
             count += 1
-            join_link = join_club_room(activityId)
-            if join_link is not None:
-                return join_link
+            join_resp: dict = await join_club_room(activityId)
+            if not join_resp.get('starting', True):
+                return join_resp['joinLink']
         logging.warn(f"Server was not started! checked 30 times sleeping 1.75s between.")
 
 
@@ -267,9 +280,18 @@ async def run_club_room_creation_test():
     join_link = await await_join_club_room(room_resp['activityId'])
     join_link += f":{room_resp['password']}"
     logging.info(f"Got join link for room: {join_link}")
-
-    logging.info(f"Sleeping 45 seconds then deleting room")
-    await asyncio.sleep(45)
+    exists_start = time.time()
+    # while join_link is not None:
+    logging.info(f"waiting 315 seconds, should still be active")
+    await asyncio.sleep(315.)
+    join_info = await join_club_room(room_resp['activityId'])
+    logging.info(f"waiting 30 seconds, should not active")
+    await asyncio.sleep(30.)
+    join_info = await join_club_room(room_resp['activityId'])
+        # if join_info.get('starting', False):
+        #     break
+    logging.info(f"Server active for {time.time() - exists_start} seconds")
+    logging.info(f"deleting room")
     await delete_club_room(room_resp['activityId'])
     logging.info(f"Deleted room")
 

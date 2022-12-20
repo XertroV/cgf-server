@@ -16,7 +16,7 @@ from beanie import Document, PydanticObjectId, Link, Indexed
 from beanie.operators import GTE, Eq, In
 from beanie.exceptions import StateNotSaved
 import beanie
-from cgf.NadeoApi import await_maps_uploaded, create_club_room, delete_club_room, await_join_club_room, await_nadeo_services_initialized
+from cgf.NadeoApi import await_maps_uploaded, create_club_room, delete_club_room, await_join_club_room, await_nadeo_services_initialized, get_club_room, join_club_room
 
 import cgf.RandomMapCacher as RMC
 from cgf.models.Map import Map, difficulty_to_int, int_to_difficulty
@@ -108,6 +108,8 @@ class Room(HasAdminsModel):
     max_difficulty: int = Field(default=3)
     map_list: list[int]
     use_club_room: bool = False
+    cr_activity_id: int = -1
+    cr_join_link: str = ""
     # note: this type signature causes beanie to cast values to strings
     game_opts: dict[str, str] = Field(default_factory=dict)
     # ts
@@ -128,6 +130,9 @@ class Room(HasAdminsModel):
                 ("creation_ts", pymongo.DESCENDING),
                 ("lobby", pymongo.ASCENDING),
             ],
+            # [
+            #     ("cr_activity_id", pymongo.ASCENDING)
+            # ]
             # IndexModel(
             #     [("test_str", pymongo.DESCENDING)],
             #     name="test_string_index_DESCENDING",
@@ -159,6 +164,9 @@ class Room(HasAdminsModel):
             game_start_time=self.game_start_time,
             started=0 < self.game_start_time < time.time(),
             game_opts=self.game_opts,
+            use_club_room=self.use_club_room,
+            # cr_activity_id=self.cr_activity_id,
+            cr_join_link=self.cr_join_link,
         )
 
 
@@ -458,6 +466,7 @@ class RoomController(HasChats):
     uid_to_teams: dict[str, int]
     teams: list[list["Client"]]
     maps: dict[int, Map]
+    last_prep_status: str = ""
 
     def __init__(self, model=None, lobby_inst=None, **kwargs):
         super().__init__()
@@ -471,7 +480,7 @@ class RoomController(HasChats):
         asyncio.create_task(self.load_game())
         asyncio.create_task(self.load_maps())
         asyncio.create_task(self.when_empty_retire_room())
-        asyncio.create_task(self.init_club_room())
+        asyncio.create_task(self.init_room_with_status_msgs())
 
     async def initialized(self):
         while not self.loaded_chat or not self.loaded_game or not self.loaded_maps:
@@ -521,14 +530,25 @@ class RoomController(HasChats):
             for client in self.clients:
                 self.tell_maps_loaded_if_loaded(client)
 
-    async def init_club_room(self):
+    def broadcast_preparation_status(self, msg: str):
+        self.last_prep_status = msg
+        self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Loading maps and initializing.'})
+
+    def send_last_prep_status(self, client: "Client"):
+        client.write_message('PREPARATION_STATUS', {'msg': self.last_prep_status})
+
+    async def init_room_with_status_msgs(self):
+        self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Loading maps and initializing.'})
         while not self.loaded_maps:
             await asyncio.sleep(0.05)
         while len(self.teams) == 0:
             await asyncio.sleep(0.05)
         while len(self.teams[0]) == 0:
             await asyncio.sleep(0.05)
-        self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Initializing.'})
+        if not self.model.use_club_room:
+            self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Ready when you are.'})
+            return
+        self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Initializing club room.'})
         await await_nadeo_services_initialized()
         self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Ensuring maps are uploaded to Nadeo services.'})
         map_tids_and_uids = [[m.TrackID, m.TrackUID] for m in self.maps.values()]
@@ -539,13 +559,42 @@ class RoomController(HasChats):
             leader.write_message("ENSURE_MAPS_NADEO", {'map_tids_uids': map_tids_and_uids})
             while (self.teams[0][0] == leader and not await_maps_task.done()):
                 await asyncio.sleep(0.05)
-        self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Creating room.'})
-        room_resp = await create_club_room(f"TTG-{self.name.split('##')[-1][:8]}", map_uids, password=1, settings=DEFAULT_CLUB_ROOM_SETTINGS)
-        if room_resp is None:
-            self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Error creating room.', 'error': True})
+        room_resp = None
+        if self.model.cr_activity_id < 0:
+            self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Creating room.'})
+            room_resp = await create_club_room(f"TTG-{self.name.split('##')[-1][:8]}", map_uids, password=1, settings=DEFAULT_CLUB_ROOM_SETTINGS)
+            if room_resp is None:
+                self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Error creating room.', 'error': True})
+                return
+            self.model.cr_activity_id = room_resp['activityId']
+            self.persist_model()
+        else:
+            self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Getting room details.'})
+            room_resp = await get_club_room(self.model.cr_activity_id)
+            if room_resp is None:
+                self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Error getting room details (the room may have been garbage collected already).', 'error': True})
+                return
+        self.broadcast_type_pl('PREPARATION_STATUS', {'msg': f'Acquired club room: {room_resp["activityId"]}.'})
+        join_link = await await_join_club_room(room_resp['activityId'])
+        if join_link is None:
+            self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Error server did not start.', 'error': True})
             return
-        self.broadcast_type_pl('PREPARATION_STATUS', {'msg': f'Created club room: {room_resp["activityId"]}'})
-
+        join_link += f":{room_resp['password']}"
+        self.broadcast_type_pl('PREPARATION_STATUS', {'msg': f'Server ready. Start the game within the next 5 minutes, otherwise the server will time out.'})
+        self.broadcast_type_pl('SERVER_JOIN_LINK', {'join_link': join_link})
+        self.model.cr_join_link = join_link
+        self.persist_model()
+        sleep_duration = 5.0
+        await asyncio.sleep(sleep_duration)
+        join_info = await join_club_room(room_resp['activityId'])
+        while join_info is not None:
+            await asyncio.sleep(sleep_duration)
+            join_info = await join_club_room(room_resp['activityId'])
+            if join_info is None or join_info.get('starting', True):
+                break
+        # this will technically start the server again, I think. However, better to error out and ensure that we don't keep calling this forever and wasting nadeo resources.
+        self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Server ran for 5+ min and timed out. Please re-create the room.', 'error': True})
+        asyncio.create_task(delete_club_room(room_resp['activityId']))
 
 
     @property
@@ -667,6 +716,7 @@ class RoomController(HasChats):
         self.send_room_info(client)
         self.send_recent_chat(client)
         self.send_admin_mod_status(client)
+        self.send_last_prep_status(client)
         self.on_list_teams(client)
         self.tell_player_list(client)
         self.tell_maps_loaded_if_loaded(client)
@@ -1366,6 +1416,8 @@ class Lobby(HasChats):
             room.model.is_open = False
             room.model.is_retired = True
             room.persist_model()
+        if room.model.use_club_room and room.model.cr_activity_id > 0:
+            asyncio.create_task(delete_club_room(room.model.cr_activity_id))
         if room.name in self.rooms:
             self.rooms.pop(room.name)
         self.broadcast_msg(Message(type="ROOM_RETIRED", payload=dict(name=room.name)))

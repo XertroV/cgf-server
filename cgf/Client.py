@@ -16,6 +16,7 @@ from beanie import Document, PydanticObjectId, Link, Indexed
 from beanie.operators import GTE, Eq, In
 from beanie.exceptions import StateNotSaved
 import beanie
+from cgf.NadeoApi import await_maps_uploaded, create_club_room, delete_club_room, await_join_club_room, await_nadeo_services_initialized
 
 import cgf.RandomMapCacher as RMC
 from cgf.models.Map import Map, difficulty_to_int, int_to_difficulty
@@ -36,6 +37,10 @@ class MsgException(Exception):
 all_clients: set["Client"] = set()
 # updated in Lobby constructor
 all_lobbies: dict[str, "Lobby"] = dict()
+
+
+DEFAULT_CLUB_ROOM_SETTINGS = [{"key":"S_TimeLimit","value":"3600","type":"integer"},{"key":"S_WarmUpNb","value":"1","type":"integer"},{"key":"S_WarmUpDuration","value":"10","type":"integer"},{"key":"S_WarmUpTimeout","value":"10","type":"integer"}]
+
 
 class Message(Document):
     type: str
@@ -102,6 +107,7 @@ class Room(HasAdminsModel):
     max_secs: int = Field(default=45)
     max_difficulty: int = Field(default=3)
     map_list: list[int]
+    use_club_room: bool = False
     # note: this type signature causes beanie to cast values to strings
     game_opts: dict[str, str] = Field(default_factory=dict)
     # ts
@@ -222,6 +228,9 @@ class HasClients:
 
     def broadcast_msg(self, msg: Message):
         self.broadcast_json(msg.safe_json)
+
+    def broadcast_type_pl(self, type: str, payload: dict):
+        self.broadcast_json({'type': type, 'payload': payload, 'visibility': "global"})
 
     def broadcast_json(self, msg_j: dict):
         for client in self.clients:
@@ -462,6 +471,7 @@ class RoomController(HasChats):
         asyncio.create_task(self.load_game())
         asyncio.create_task(self.load_maps())
         asyncio.create_task(self.when_empty_retire_room())
+        asyncio.create_task(self.init_club_room())
 
     async def initialized(self):
         while not self.loaded_chat or not self.loaded_game or not self.loaded_maps:
@@ -511,6 +521,33 @@ class RoomController(HasChats):
             for client in self.clients:
                 self.tell_maps_loaded_if_loaded(client)
 
+    async def init_club_room(self):
+        while not self.loaded_maps:
+            await asyncio.sleep(0.05)
+        while len(self.teams) == 0:
+            await asyncio.sleep(0.05)
+        while len(self.teams[0]) == 0:
+            await asyncio.sleep(0.05)
+        self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Initializing.'})
+        await await_nadeo_services_initialized()
+        self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Ensuring maps are uploaded to Nadeo services.'})
+        map_tids_and_uids = [[m.TrackID, m.TrackUID] for m in self.maps.values()]
+        map_uids = [m[1] for m in map_tids_and_uids]
+        await_maps_task = asyncio.create_task(await_maps_uploaded(map_uids))
+        while not await_maps_task.done():
+            leader = self.teams[0][0]
+            leader.write_message("ENSURE_MAPS_NADEO", {'map_tids_uids': map_tids_and_uids})
+            while (self.teams[0][0] == leader and not await_maps_task.done()):
+                await asyncio.sleep(0.05)
+        self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Creating room.'})
+        room_resp = await create_club_room(f"TTG-{self.name.split('##')[-1][:8]}", map_uids, password=1, settings=DEFAULT_CLUB_ROOM_SETTINGS)
+        if room_resp is None:
+            self.broadcast_type_pl('PREPARATION_STATUS', {'msg': 'Error creating room.', 'error': True})
+            return
+        self.broadcast_type_pl('PREPARATION_STATUS', {'msg': f'Created club room: {room_resp["activityId"]}'})
+
+
+
     @property
     def is_empty(self):
         has_clients = len(self.clients) > 0
@@ -535,7 +572,7 @@ class RoomController(HasChats):
         self.lobby_inst.retire_room(self)
 
     @property
-    def name(self): return self.model.name
+    def name(self) -> str: return self.model.name
 
     @property
     def map_list(self): return self.model.map_list
@@ -1512,11 +1549,12 @@ class Lobby(HasChats):
         max_difficulty = clamp(msg.payload.get('max_difficulty', 3), 0, 5)
         map_pack = msg.payload.get('map_pack', None)
         game_opts: dict = msg.payload.get('game_opts', dict())
-        self.fix_game_opts(game_opts)
+        # self.fix_game_opts(game_opts)
         if not isinstance(game_opts, dict): return client.tell_error(f"Invalid format for game_opts.")
         for k,v in game_opts.items():
             if not isinstance(k, str) or isinstance(v, dict) or isinstance(v, list):
                 return client.tell_error(f"Invalid k,v pair in game opts: `{k}: {v}`")
+        use_club_room = msg.payload.get('use_club_room', False)
         # send back: {name: string, player_limit: int, n_teams: int, is_public: bool, join_code: str}
         room = RoomController(lobby_inst=self,
             name=name, lobby=self.name,
@@ -1525,7 +1563,7 @@ class Lobby(HasChats):
             admins=[msg.user],
             maps_required=maps_required, map_pack=map_pack,
             min_secs=min_secs, max_secs=max_secs, max_difficulty=max_difficulty,
-            game_opts=game_opts,
+            game_opts=game_opts, use_club_room=use_club_room,
         )
         # note: will throw if name collision
         await room.model.save()

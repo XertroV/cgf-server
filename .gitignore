@@ -7,3 +7,6 @@ __pycache__
 .s3.*
 *.log
 .openplanet-auth
+.openplanet-auth.*
+.ubisoft-acct
+.ubisoft-acct.*

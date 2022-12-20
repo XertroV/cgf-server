@@ -112,14 +112,6 @@ class Map(Document):
     HasScreenshot: bool
     HasThumbnail: bool
 
-    # class Settings:
-    #     indexes = [
-    #         [
-    #             ("creation_ts", pymongo.DESCENDING),
-    #             ("lobby", pymongo.ASCENDING),
-    #         ],
-    #     ]
-
     def __init__(self, *args, LengthName="2 m 30 s", LengthSecs=None, **kwargs):
         if LengthSecs is None:
             LengthSecs = 0
@@ -150,7 +142,7 @@ class Map(Document):
     @property
     def safe_json_shorter(self):
         d = dict()
-        fields = ['TrackID', 'Name', 'AuthorTime', 'Tags', 'TypeName', 'StyleName', 'LengthName', 'LengthSecs', 'LengthEnum', 'DifficultyName', 'HasThumbnail']
+        fields = ['TrackID', 'TrackUID', 'Name', 'AuthorTime', 'Tags', 'TypeName', 'StyleName', 'LengthName', 'LengthSecs', 'LengthEnum', 'DifficultyName', 'HasThumbnail']
         for f in fields:
             d[f] = self.__getattribute__(f)
         if self.GbxMapName != "?":

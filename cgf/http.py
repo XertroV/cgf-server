@@ -3,5 +3,5 @@ import aiohttp
 
 def get_session():
     return aiohttp.ClientSession(headers={
-        'User-Agent': f'CommunityGameFramework/contact=@XertroV/server-version={SERVER_VERSION}/'
+        'User-Agent': f'CommunityGameFramework / contact=@XertroV,cgf@xk.io / server-version={SERVER_VERSION}'
     })

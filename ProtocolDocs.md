@@ -78,6 +78,9 @@ PLAYER_JOINED, etc
 |y| 2 | GAME_STARTING_AT | `{start_time: float, wait_time: float}` |
 |y| 2 | GAME_START_ABORT | `{}` |
 
+|y| 2 | PREPARATION_STATUS | `{msg: str, error?: bool}` |
+|y| 2 | ENSURE_MAPS_NADEO | `{map_tids_uids: array<[int, int]>}` | the client should download the maps (based on TrackID) and upload them to nadeo services (based on UID) |
+
 
 ## IN GAME
 

@@ -10,11 +10,12 @@ import urllib3
 import threading
 
 from cgf.Client import Client, ChatMessages, Lobby, LobbyModel, Message, Room, GameSession, get_main_lobby, all_clients, populate_all_lobbies, all_lobbies
+from cgf.NadeoApi import run_club_room_creation_test, run_nadeo_services_auth
 import cgf.RandomMapCacher as RMC
 from cgf.User import User
 from cgf.models.MapPack import MapPack
 from cgf.users import all_users
-from cgf.consts import SERVER_VERSION, SHUTDOWN, SHUTDOWN_EVT
+from cgf.consts import LOCAL_DEV_MODE, SERVER_VERSION, SHUTDOWN, SHUTDOWN_EVT
 from cgf.models.Map import Map
 from cgf.users import all_users
 from cgf.db import db
@@ -71,6 +72,11 @@ async def main():
     signal.signal(signal.SIGINT, cleanup_clients)
 
     log.info(f"[version: {SERVER_VERSION}] Starting server: {HOST_NAME}:{TCP_PORT}")
+    asyncio.create_task(run_nadeo_services_auth())
+    if LOCAL_DEV_MODE:
+        await run_club_room_creation_test()
+        return
+
 
     with timeit_context("init_beanie"):
         await init_beanie(database=db[MAIN_DB_NAME], document_models=[

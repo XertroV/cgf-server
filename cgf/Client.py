@@ -536,6 +536,7 @@ class RoomController(HasChats):
                 self.persist_model()
             except RMC.MapPackNotFound as e:
                 self.set_map_load_error(e)
+                self.loaded_maps = True
                 return
         if len(self.model.map_list) < self.model.maps_required:
             await self.load_maps()
@@ -577,6 +578,9 @@ class RoomController(HasChats):
         if not self.model.use_club_room:
             self.broadcast_preparation_status('Ready when you are.')
             self.club_room_initialized = True
+            return
+        if self.map_load_error is not None:
+            self.broadcast_preparation_status('Aborting room set up due to map load error.')
             return
         self.broadcast_preparation_status('Initializing club room.')
         await await_nadeo_services_initialized()

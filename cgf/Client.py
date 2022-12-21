@@ -45,8 +45,8 @@ DEFAULT_CLUB_ROOM_SETTINGS = [
     {"key":"S_RespawnBehaviour","value":"1","type":"integer"},  # 5: never give up, but then del doesn't work
     {"key":"S_DelayBeforeNextMap","value":"0","type":"integer"},
     {"key":"S_ChatTime","value":"0","type":"integer"},
-    {"key":"S_WarmUpNb","value":"1","type":"integer"},
-    {"key":"S_WarmUpDuration","value":"1","type":"integer"}
+    {"key":"S_WarmUpNb","value":"0","type":"integer"},
+    # {"key":"S_WarmUpDuration","value":"1","type":"integer"}
     # {"key":"S_WarmUpDuration","value":"10","type":"integer"}
     # {"key":"S_WarmUpDuration","value":"120","type":"integer"}
 ]
@@ -613,13 +613,13 @@ class RoomController(HasChats):
             if room_resp is None:
                 self.broadcast_preparation_status('Error getting room details (the room may have been garbage collected already).', True)
                 return
-        self.broadcast_preparation_status(f'Acquired club room: {room_resp["activityId"]}.')
+        self.broadcast_preparation_status(f'Acquired club room: {room_resp["activityId"]}. Awaiting server start...')
         join_link = await await_join_club_room(room_resp['activityId'])
         if join_link is None:
             self.broadcast_preparation_status('Error server did not start.', True)
             return
         join_link += f":{room_resp['password']}"
-        self.broadcast_preparation_status(f'Server ready. Start the game within the next 5 minutes, otherwise the server will time out.')
+        self.broadcast_preparation_status(f'Server ready. \\$ff8Start the game within the next 5 minutes, otherwise the server will time out.')
         self.model.cr_join_link = join_link
         self.persist_model()
         self.broadcast_type_pl('SERVER_JOIN_LINK', {'join_link': join_link})

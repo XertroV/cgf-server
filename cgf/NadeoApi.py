@@ -68,7 +68,7 @@ async def start_session():
                 logging.warn(f"Error starting session to ubi; {resp.status}, {await resp.content.read()}")
                 return
             data = await resp.json()
-            logging.info(f"Got ubi session: {data}")
+            logging.info(f"Got ubi session")
             return UbiAuthResp(**data)
 
 
@@ -171,6 +171,7 @@ async def await_maps_uploaded(mapUids: list[str]):
                     uid = mapInfo['mapUid']
                     if uid in mapsNotUploaded:
                         mapsNotUploaded.remove(uid)
+                logging.info(f"Maps not yet uploaded; {mapsNotUploaded}")
     if len(mapsNotUploaded) > 0:
         logging.warn(f"Some maps are not yet uploaded! {mapsNotUploaded}")
     else:
@@ -179,7 +180,7 @@ async def await_maps_uploaded(mapUids: list[str]):
 
 CREATE_ROOM_URL = f"https://live-services.trackmania.nadeo.live/api/token/club/{TTG_CLUB_ID}/room/create"
 DELETE_ROOM_URL = lambda activityId: f"https://live-services.trackmania.nadeo.live/api/token/club/{TTG_CLUB_ID}/activity/{activityId}/delete"
-GET_ROOM_URL = lambda activityId: f"https://live-services.trackmania.nadeo.live/api/token/club/{TTG_CLUB_ID}/room/{activityId}"
+GET_ROOM_URL = lambda activityId: f"https://live-services.trackmania.nadeo.live/api/token/club/{TTG_CLUB_ID}/room/{activityId}/"
 GET_PASSWORD_URL = lambda activityId: f"https://live-services.trackmania.nadeo.live/api/token/club/{TTG_CLUB_ID}/room/{activityId}/get-password"
 POST_JOIN_URL = lambda activityId: f"https://live-services.trackmania.nadeo.live/api/token/club/{TTG_CLUB_ID}/room/{activityId}/join"
 
@@ -227,11 +228,18 @@ async def create_club_room(name: str, mapUids=list[str], region: str = "eu-west"
 async def get_club_room(activityId: int):
     await await_nadeo_services_initialized()
     async with get_live_session() as session:
-        async with session.post(GET_ROOM_URL(activityId)) as resp:
+        async with session.get(GET_ROOM_URL(activityId)) as resp:
             if not resp.ok:
                 logging.warn(f"Error getting club room {activityId}; {resp.status}, {await resp.content.read()}")
             else:
-                return await resp.json()
+                data = await resp.json()
+                async with session.get(GET_PASSWORD_URL(data['activityId'])) as resp:
+                    if not resp.ok:
+                        logging.warn(f"Error getting pw for club room; {resp.status}, {await resp.content.read()}; {data}")
+                        return data
+                    pwData = await resp.json()
+                    data['password'] = pwData['password']
+                    return data
 
 async def delete_club_room(activityId: int):
     await await_nadeo_services_initialized()
@@ -249,9 +257,12 @@ async def join_club_room(activityId: int):
         async with session.post(POST_JOIN_URL(activityId)) as resp:
             if not resp.ok:
                 logging.warn(f"Error getting join info for {activityId}; {resp.status}, {await resp.content.read()}")
+                if resp.status == 504: # timeout
+                    await asyncio.sleep(1.0)
+                    return await join_club_room(activityId)
             else:
                 data: dict = await resp.json()
-                logging.debug(f"Join link data: {data}")
+                # logging.debug(f"Join link data: {data}")
                 return data
 
 async def await_join_club_room(activityId: int):

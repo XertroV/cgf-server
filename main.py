@@ -73,10 +73,9 @@ async def main():
 
     log.info(f"[version: {SERVER_VERSION}] Starting server: {HOST_NAME}:{TCP_PORT}")
     asyncio.create_task(run_nadeo_services_auth())
-    if LOCAL_DEV_MODE:
-        await run_club_room_creation_test()
-        return
-
+    # if LOCAL_DEV_MODE:
+    #     await run_club_room_creation_test()
+    #     return
 
     with timeit_context("init_beanie"):
         await init_beanie(database=db[MAIN_DB_NAME], document_models=[

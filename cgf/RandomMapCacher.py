@@ -20,6 +20,13 @@ maps_to_cache: list[Map] = list()
 known_maps: set[int] = set()
 cached_maps: set[int] = set()
 
+class MapPackNotFound(Exception):
+    def __init__(self, _id: int, status_code: int | None, message: str | None, *args: object) -> None:
+        self.id = _id
+        self.status_code = 0 if status_code is None else status_code
+        self.message = 'Unknown' if message is None else message
+        super().__init__(*args)
+
 MAINTAIN_N_MAPS = 200 if not LOCAL_DEV_MODE else 20  #200
 
 def rm_query_args():
@@ -274,7 +281,7 @@ async def get_some_maps(n: int, min_secs: int = 0, max_secs: int = LONG_MAP_SECS
 
 cached_map_packs: set[int] = set()
 
-async def get_map_pack(id: int, count: int = 0):
+async def get_map_pack(id: int, count: int = 0) -> dict | None:
     async with get_session() as session:
         async with session.get(f"https://trackmania.exchange/api/mappack/get_info/{id}") as resp:
             if resp.status == 200:
@@ -304,8 +311,12 @@ async def get_maps_from_map_pack(maps_needed: int, id: int):
         data = await get_map_pack(id)
         _mp = None
         # error if these keys exist
-        if 'StatusCode' not in data and 'Message' not in data:
+        if data is not None and 'StatusCode' not in data and 'Message' not in data:
             _mp = MapPack(**data)
+        elif data is not None:
+            raise MapPackNotFound(id, data.get('StatusCode', None), data.get('Message', None))
+        else:
+            raise MapPackNotFound(id, 500, 'Could not complete the request.')
         if mp is None and _mp is not None:
             await _mp.insert()
         else:

@@ -40,7 +40,8 @@ all_lobbies: dict[str, "Lobby"] = dict()
 
 
 DEFAULT_CLUB_ROOM_SETTINGS = [
-    {"key":"S_TimeLimit","value":"3600","type":"integer"},
+    # {"key":"S_TimeLimit","value":"3600","type":"integer"},
+    {"key":"S_TimeLimit","value":"0","type":"integer"},
     {"key":"S_RespawnBehaviour","value":"1","type":"integer"},  # 5: never give up, but then del doesn't work
     {"key":"S_DelayBeforeNextMap","value":"0","type":"integer"},
     {"key":"S_ChatTime","value":"0","type":"integer"},
@@ -487,6 +488,7 @@ class RoomController(HasChats):
         self.teams = [list() for _ in range(self.model.n_teams)]
         self.maps = dict()
         self.last_prep_status: dict = dict(msg="")
+        self.map_load_error: RMC.MapPackNotFound | None = None
         asyncio.create_task(self.load_game())
         asyncio.create_task(self.load_maps())
         asyncio.create_task(self.when_empty_retire_room())
@@ -520,17 +522,21 @@ class RoomController(HasChats):
             self.maps[m.TrackID] = m
         if maps_needed > 0:
             # todo: do we have a map pack?
-            map_gen = RMC.get_maps_from_map_pack(maps_needed, self.model.map_pack) \
-                if self.model.map_pack is not None \
-                else RMC.get_some_maps(maps_needed, self.model.min_secs, self.model.max_secs, self.model.max_difficulty)
-            # log.debug(f"Room asking for {maps_needed} maps.")
-            async for m in map_gen:
-                # log.debug(f"Got map: {m.json()}")
-                if (m.id is None):
-                    await m.save()
-                self.model.map_list.append(m.TrackID)
-                self.maps[m.TrackID] = m
-            self.persist_model()
+            try:
+                map_gen = RMC.get_maps_from_map_pack(maps_needed, self.model.map_pack) \
+                    if self.model.map_pack is not None \
+                    else RMC.get_some_maps(maps_needed, self.model.min_secs, self.model.max_secs, self.model.max_difficulty)
+                # log.debug(f"Room asking for {maps_needed} maps.")
+                async for m in map_gen:
+                    # log.debug(f"Got map: {m.json()}")
+                    if (m.id is None):
+                        await m.save()
+                    self.model.map_list.append(m.TrackID)
+                    self.maps[m.TrackID] = m
+                self.persist_model()
+            except RMC.MapPackNotFound as e:
+                self.set_map_load_error(e)
+                return
         if len(self.model.map_list) < self.model.maps_required:
             await self.load_maps()
         else:
@@ -539,6 +545,16 @@ class RoomController(HasChats):
             self.loaded_maps = True
             for client in self.clients:
                 self.tell_maps_loaded_if_loaded(client)
+
+    def set_map_load_error(self, e: RMC.MapPackNotFound):
+        logging.warn(f"Failed to load map pack: {e.id}, {e.status_code}, {e.message}")
+        self.map_load_error = e
+        self.broadcast_type_pl('MAP_LOAD_ERROR', {'msg': e.message, 'status_code': e.status_code})
+
+    def tell_client_map_load_error(self, client: "Client"):
+        if self.map_load_error is not None:
+            e = self.map_load_error
+            client.write_message('MAP_LOAD_ERROR', {'msg': e.message, 'status_code': e.status_code})
 
     def broadcast_preparation_status(self, msg: str, error = False):
         pl = dict(msg=msg)
@@ -711,6 +727,7 @@ class RoomController(HasChats):
         client.write_message("ROOM_INFO", self.to_created_room_json)
 
     def tell_maps_loaded_if_loaded(self, client: "Client"):
+        self.tell_client_map_load_error(client)
         if self.loaded_maps:
             client.write_message("MAPS_LOADED", dict())
 
@@ -1433,12 +1450,12 @@ class Lobby(HasChats):
         if room.model.is_retired and room.name not in self.rooms:
             return
         log.info(f"Retiring room: {room.name}")
-        if room.model.is_open:
+        if not room.model.is_retired:
             room.model.is_open = False
             room.model.is_retired = True
             room.persist_model()
-        if room.model.use_club_room and room.model.cr_activity_id > 0:
-            asyncio.create_task(delete_club_room(room.model.cr_activity_id))
+            if room.model.use_club_room and room.model.cr_activity_id > 0:
+                asyncio.create_task(delete_club_room(room.model.cr_activity_id))
         if room.name in self.rooms:
             self.rooms.pop(room.name)
         self.broadcast_msg(Message(type="ROOM_RETIRED", payload=dict(name=room.name)))

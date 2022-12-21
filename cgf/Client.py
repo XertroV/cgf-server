@@ -38,6 +38,8 @@ all_clients: set["Client"] = set()
 # updated in Lobby constructor
 all_lobbies: dict[str, "Lobby"] = dict()
 
+# 'eventful descent' - aug 1st 2022 TOTD
+lobby_map_uid = "Qi4R2rAE36DsVco_DJglpr96eQ4"
 
 DEFAULT_CLUB_ROOM_SETTINGS = [
     # {"key":"S_TimeLimit","value":"3600","type":"integer"},
@@ -601,7 +603,7 @@ class RoomController(HasChats):
         room_resp = None
         if self.model.cr_activity_id < 0:
             self.broadcast_preparation_status('Creating room.')
-            room_resp = await create_club_room(f"TTG-{self.name.split('##')[-1][:8]}", map_uids, password=1, settings=DEFAULT_CLUB_ROOM_SETTINGS)
+            room_resp = await create_club_room(f"TTG-{self.name.split('##')[-1][:8]}", [lobby_map_uid] + map_uids, password=1, settings=DEFAULT_CLUB_ROOM_SETTINGS)
             if room_resp is None:
                 self.broadcast_preparation_status('Error creating room.', True)
                 return

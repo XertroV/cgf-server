@@ -267,14 +267,14 @@ async def join_club_room(activityId: int):
 
 async def await_join_club_room(activityId: int):
         count = 0
-        while count < 30:
+        while count < 60:
             if count > 0:
-                await asyncio.sleep(1.75)
+                await asyncio.sleep(.75)
             count += 1
             join_resp: dict = await join_club_room(activityId)
             if not join_resp.get('starting', True):
                 return join_resp['joinLink']
-        logging.warn(f"Server was not started! checked 30 times sleeping 1.75s between.")
+        logging.warn(f"Server was not started! checked 60 times sleeping .75s between.")
 
 
 # works!

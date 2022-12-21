@@ -37,8 +37,8 @@ async def init_known_maps():
     known_maps.update([m.TrackID for m in _maps])
     logging.info(f"Known maps: {len(known_maps)}")
     asyncio.create_task(ensure_known_maps_have_difficulty_int())
-    if not LOCAL_DEV_MODE:
-        asyncio.create_task(ensure_known_maps_cached())
+    # if not LOCAL_DEV_MODE:
+    asyncio.create_task(ensure_known_maps_cached())
 
 async def ensure_known_maps_have_difficulty_int():
     maps = await Map.find(Map.DifficultyInt == None).to_list()
@@ -196,7 +196,7 @@ async def _add_a_random_map(delay = 0):
     if delay > 0: await asyncio.sleep(delay)
     async with get_session() as session:
         try:
-            async with session.get(f"https://trackmania.exchange/mapsearch2/search?api=on&random=1", timeout=5.0) as resp:
+            async with session.get(f"https://trackmania.exchange/mapsearch2/search?api=on&random=1", timeout=10.0) as resp:
                 if resp.status == 200:
                     await _add_maps_from_json(await resp.json())
                 else:
@@ -209,6 +209,7 @@ async def _add_a_random_map(delay = 0):
                     fresh_random_maps.extend(maps)
         except asyncio.TimeoutError as e:
             logging.warning(f"TMX timeout for random maps")
+            await asyncio.sleep(5.0)
 
 async def _add_a_specific_map(track_id: int):
     async with get_session() as session:

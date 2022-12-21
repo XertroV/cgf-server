@@ -37,8 +37,8 @@ async def init_known_maps():
     known_maps.update([m.TrackID for m in _maps])
     logging.info(f"Known maps: {len(known_maps)}")
     asyncio.create_task(ensure_known_maps_have_difficulty_int())
-    # if not LOCAL_DEV_MODE:
-    asyncio.create_task(ensure_known_maps_cached())
+    if not LOCAL_DEV_MODE:
+        asyncio.create_task(ensure_known_maps_cached())
 
 async def ensure_known_maps_have_difficulty_int():
     maps = await Map.find(Map.DifficultyInt == None).to_list()
@@ -201,15 +201,21 @@ async def _add_a_random_map(delay = 0):
                     await _add_maps_from_json(await resp.json())
                 else:
                     logging.warning(f"Could not get random map: {resp.status} code. TMX might be down. Adding some random maps from the DB.")
-                    maps = await Map.find(*rm_query_args(), projection_model=MapJustID).to_list()
-                    new_maps = []
-                    for _ in range(20):
-                        new_maps.append(random.choice(maps))
-                    maps = await Map.find_many(In(Map.TrackID, new_maps)).to_list()
-                    fresh_random_maps.extend(maps)
+                    await add_maps_from_db()
         except asyncio.TimeoutError as e:
             logging.warning(f"TMX timeout for random maps")
-            await asyncio.sleep(5.0)
+            await add_maps_from_db()
+
+
+async def add_maps_from_db():
+    maps = await Map.find(*rm_query_args(), projection_model=MapJustID).to_list()
+    new_maps = []
+    for _ in range(2):
+        new_maps.append(random.choice(maps).TrackID)
+    maps = await Map.find_many(In(Map.TrackID, new_maps)).to_list()
+    fresh_random_maps.extend(maps)
+    logging.info(f"Added {len(maps)} maps from DB to fresh_random_maps; {new_maps}")
+
 
 async def _add_a_specific_map(track_id: int):
     async with get_session() as session:

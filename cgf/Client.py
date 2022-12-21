@@ -567,6 +567,8 @@ class RoomController(HasChats):
         self.broadcast_preparation_status('Ensuring maps are uploaded to Nadeo services.')
         map_tids_and_uids = [[m.TrackID, m.TrackUID] for m in self.maps.values()]
         map_uids = [m[1] for m in map_tids_and_uids]
+        # don't leak info about top left square (would be first map otherwise)
+        random.shuffle(map_uids)
         await_maps_task = asyncio.create_task(await_maps_uploaded(map_uids))
         while not await_maps_task.done():
             while (not self.model.is_retired and len(self.teams[0]) == 0):

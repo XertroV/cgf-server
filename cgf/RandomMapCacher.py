@@ -52,9 +52,11 @@ async def ensure_known_maps_have_difficulty_int():
 
 async def ensure_known_maps_cached():
     log_s3_progress = True
+    first_run = True
     while not SHUTDOWN:
         _known_maps = set(known_maps)
-        cached_maps.update(await asyncio.get_event_loop().run_in_executor(None, _get_bucket_keys_outer, log_s3_progress))
+        if first_run:
+            cached_maps.update(await asyncio.get_event_loop().run_in_executor(None, _get_bucket_keys_outer, log_s3_progress))
         log_s3_progress = False  # don't log again on following loops
         uncached = _known_maps - cached_maps
         logging.info(f"Getting {len(uncached)} uncached but known maps")
@@ -74,6 +76,7 @@ async def ensure_known_maps_cached():
             if SHUTDOWN: break
         # at end we want to get any new maps so we cache them
         await add_latest_maps()
+        first_run = False
 
 def _get_bucket_keys_outer(log_s3_progress = True) -> set[int]:
     try:

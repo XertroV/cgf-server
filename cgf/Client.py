@@ -39,7 +39,9 @@ all_clients: set["Client"] = set()
 all_lobbies: dict[str, "Lobby"] = dict()
 
 # 'eventful descent' - aug 1st 2022 TOTD
-lobby_map_uid = "Qi4R2rAE36DsVco_DJglpr96eQ4"
+# lobby_map_uid = "Qi4R2rAE36DsVco_DJglpr96eQ4"
+# TTG pregame waiting room (v1)
+lobby_map_uid = "wWG9lyQ3dYjzckhhprW9WhyCC6g"
 
 DEFAULT_CLUB_ROOM_SETTINGS = [
     # {"key":"S_TimeLimit","value":"3600","type":"integer"},

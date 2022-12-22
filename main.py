@@ -14,6 +14,7 @@ from cgf.NadeoApi import run_club_room_creation_test, run_nadeo_services_auth
 import cgf.RandomMapCacher as RMC
 from cgf.User import User
 from cgf.models.MapPack import MapPack
+from cgf.models.RandomMapQueue import RandomMapQueue
 from cgf.users import all_users
 from cgf.consts import LOCAL_DEV_MODE, SERVER_VERSION, SHUTDOWN, SHUTDOWN_EVT
 from cgf.models.Map import Map
@@ -83,6 +84,7 @@ async def main():
             ChatMessages,
             Room, GameSession,
             Map, MapPack,
+            RandomMapQueue,
         ], allow_index_dropping=True)
     with timeit_context("Load all users"):
         async for user in User.find_all():
@@ -107,10 +109,14 @@ async def main():
                 await room.initialized()
                 count_games += 1 if room.game is not None else 0
 
+    with timeit_context("Load cached fresh maps"):
+        await RMC.init_fresh_maps_from_db()
+
     with timeit_context("Load known maps"):
         await RMC.init_known_maps()
 
     with timeit_context("Get latest maps from TMX"):
+        log.info(f"Getting latest maps from TMX")
         await RMC.add_latest_maps()
 
     asyncio.create_task(RMC.maintain_random_maps())

@@ -10,6 +10,7 @@ from beanie.operators import In, Eq
 
 from cgf.consts import LOCAL_DEV_MODE, SERVER_VERSION, SHUTDOWN, SHUTDOWN_EVT
 from cgf.models.MapPack import MapPack
+from cgf.models.RandomMapQueue import RandomMapQueue
 from cgf.utils import chunk
 from cgf.http import get_session
 from cgf.models.Map import LONG_MAP_SECS, Map, MapJustID, difficulty_to_int
@@ -19,6 +20,23 @@ fresh_random_maps: list[Map] = list()
 maps_to_cache: list[Map] = list()
 known_maps: set[int] = set()
 cached_maps: set[int] = set()
+
+async def load_random_map_queue():
+    return await RandomMapQueue.find_one(RandomMapQueue.name == "main")
+
+async def sync_random_map_queue():
+    q = await load_random_map_queue()
+    if q is None:
+        q = RandomMapQueue(name="main", tracks=list())
+    q.tracks = [m.TrackID for m in fresh_random_maps]
+    await q.save()
+
+async def init_fresh_maps_from_db():
+    global fresh_random_maps
+    cached_random_maps = await load_random_map_queue()
+    if cached_random_maps is not None:
+        fresh_random_maps = await Map.find(In(Map.TrackID, cached_random_maps.tracks)).to_list()
+    logging.info(f"fresh random maps loaded from db: {len(fresh_random_maps)}")
 
 class MapPackNotFound(Exception):
     def __init__(self, _id: int, status_code: int | None, message: str | None, *args: object) -> None:
@@ -170,6 +188,7 @@ async def maintain_random_maps():
     while True:
         if len(fresh_random_maps) < MAINTAIN_N_MAPS:
             await add_more_random_maps(10)
+            await sync_random_map_queue()
         else:
             await asyncio.sleep(0.1)
 
@@ -183,6 +202,7 @@ async def maintain_random_maps_slow():
             currFRM = len(fresh_random_maps)
             if currFRM % 10 == 0:
                 logging.info(f"Fresh random maps: {currFRM}")
+                await sync_random_map_queue()
         await asyncio.sleep(2)
 
 async def add_more_random_maps(n: int):
@@ -291,12 +311,15 @@ async def get_some_maps(n: int, min_secs: int = 0, max_secs: int = LONG_MAP_SECS
         if maps_checked > 25:
             break
     nb_required = n - sent
-    if nb_required == 0: return
+    if nb_required == 0:
+        await sync_random_map_queue()
+        return
     extra_ids = await Map.find_many(Map.LengthSecs >= min_secs, Map.LengthSecs <= max_secs, Map.DifficultyInt <= max_difficulty, *rm_query_args(), projection_model=MapJustID).to_list()
     track_ids = random.choices(extra_ids, k=nb_required)
     logging.info(f"Selecting {len(track_ids)} extra maps from DB.")
     for m in await Map.find_many(In(Map.TrackID, track_ids)).to_list():
         yield m
+    await sync_random_map_queue()
 
 cached_map_packs: set[int] = set()
 

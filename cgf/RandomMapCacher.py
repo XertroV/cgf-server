@@ -36,6 +36,7 @@ async def init_fresh_maps_from_db():
     cached_random_maps = await load_random_map_queue()
     if cached_random_maps is not None:
         fresh_random_maps = await Map.find(In(Map.TrackID, cached_random_maps.tracks)).to_list()
+        random.shuffle(fresh_random_maps)
     logging.info(f"fresh random maps loaded from db: {len(fresh_random_maps)}")
 
 class MapPackNotFound(Exception):

@@ -309,7 +309,7 @@ async def get_some_maps(n: int, min_secs: int = 0, max_secs: int = LONG_MAP_SECS
         if length_ok and difficulty_ok:
             yield m
             sent += 1
-        if maps_checked > 25:
+        if maps_checked > 100:
             break
     nb_required = n - sent
     if nb_required == 0:

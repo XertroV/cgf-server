@@ -86,6 +86,10 @@ async def main():
             Map, MapPack,
             RandomMapQueue,
         ], allow_index_dropping=True)
+
+    with timeit_context("Load cached fresh maps"):
+        await RMC.init_fresh_maps_from_db()
+
     with timeit_context("Load all users"):
         async for user in User.find_all():
             all_users[user.uid] = user
@@ -108,9 +112,6 @@ async def main():
             for room in lobby.rooms.values():
                 await room.initialized()
                 count_games += 1 if room.game is not None else 0
-
-    with timeit_context("Load cached fresh maps"):
-        await RMC.init_fresh_maps_from_db()
 
     with timeit_context("Load known maps"):
         await RMC.init_known_maps()

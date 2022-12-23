@@ -973,6 +973,8 @@ class GameController(HasChats):
         # clients assigned on joining the game
         self.teams = list(list() for _ in model.teams)
         self.fix_players_order()
+        if (len(self.model.game_msgs) == 0):
+            self.broadcast_gm_reset()
 
     def fix_players_order(self):
         players = dict()
@@ -1024,6 +1026,10 @@ class GameController(HasChats):
 
     def send_maps_info_full(self, client: "Client"):
         client.write_message("MAPS_INFO_FULL", dict(maps=self.get_maps_list_full_for_info))
+
+    def broadcast_gm_reset(self):
+        msg = Message(type="GM_RESET", payload={})
+        asyncio.create_task(self.save_and_bcast_game_msg(msg))
 
     def broadcast_gm_player_joined(self, client):
         msg = Message(type="GM_PLAYER_JOINED", payload=client.user.safe_json)
@@ -1102,6 +1108,7 @@ class GameController(HasChats):
         elif msg.type in self.map_msg_types: await self.on_map_msg(client, msg)
         elif msg.type in self.vote_msg_types: await self.on_map_vote_msg(client, msg)
         else: is_game_msg = False
+        if msg.type == "CREATE_ROOM": await self.on_create_room(client, msg)
         if is_game_msg:
             self.append_game_msg(msg)
 
@@ -1119,6 +1126,14 @@ class GameController(HasChats):
         msg.save_via_task()
         self.persist_model()
         return self.broadcast_msg(msg)
+
+    # Overload previous room creation command and proxy stuff back to lobby.
+    # Additionally, tell the other game clients
+    async def on_create_room(self, client: "Client", msg: Message):
+        new_room = await self.room.lobby_inst.on_create_room(client, msg, handoff_at_end=False)
+        msg = Message(type="GM_REMATCH_ROOM_CREATED", payload={'join_code': new_room.model.join_code, 'by': client.user.safe_json})
+        client.write_message("REMATCH_ROOM_CREATED", msg.payload)
+        asyncio.create_task(self.save_and_bcast_game_msg(msg))
 
     async def on_map_msg(self, client: "Client", msg: Message):
         if msg.type == "LEAVE_MAP": return await self.on_map_leave(client, msg)
@@ -1630,7 +1645,7 @@ class Lobby(HasChats):
         if 'reveal_maps' not in go:
             go['reveal_maps'] = False
 
-    async def on_create_room(self, client: Client, msg: Message):
+    async def on_create_room(self, client: Client, msg: Message, handoff_at_end: bool = True):
         # incoming: {name: string, player_limit: int, n_teams: int}
         name = str(msg.payload['name']) + "##"+gen_uid(4)
         player_limit = max(MIN_PLAYERS, min(MAX_PLAYERS, int(msg.payload['player_limit'])))
@@ -1668,7 +1683,10 @@ class Lobby(HasChats):
         self.rooms[room.name] = room
         self.broadcast_msg(Message(type="NEW_ROOM", payload=room.to_room_info_json))
         client.write_message("ROOM_INFO", room.to_created_room_json)
-        await self.handoff_to_room(client, room)
+        if handoff_at_end:
+            await self.handoff_to_room(client, room)
+        else:
+            return room
 
     def update_room_status(self, room: RoomController):
         self.broadcast_msg(Message(type="ROOM_UPDATE", payload=dict(name=room.name, n_players=len(room.clients))))

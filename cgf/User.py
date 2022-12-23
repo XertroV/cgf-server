@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 
 import pymongo
@@ -38,7 +39,7 @@ class User(Document):
     def set_last_scope(self, scope: str):
         self.last_scope = scope
         self.persist()
-        print(f"User: {self.name} set scope: {scope}")
+        logging.info(f"User: {self.name} set scope: {scope}")
 
     def persist(self):
         asyncio.create_task(self.save_changes())

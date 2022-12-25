@@ -58,6 +58,7 @@ async def init_known_maps():
     asyncio.create_task(ensure_known_maps_have_difficulty_int())
     if not LOCAL_DEV_MODE:
         asyncio.create_task(ensure_known_maps_cached())
+    asyncio.create_task(ensure_maps_have_map_type())
 
 async def ensure_known_maps_have_difficulty_int():
     maps = await Map.find(Map.DifficultyInt == None).to_list()
@@ -67,6 +68,34 @@ async def ensure_known_maps_have_difficulty_int():
         await m.save()
         # logging.info(f"Set map difficulty: {m.TrackID}: {m.DifficultyName} = {m.DifficultyInt}")
     logging.info(f"Set DifficultyInt on {len(maps)} maps")
+
+
+async def ensure_maps_have_map_type():
+    tids_to_update: list[int] = []
+    to_update_count = await Map.find(Map.MapType == None).count()
+    logging.info(f"Updating map type on {to_update_count} maps")
+    async for m in Map.find(Map.MapType == None):
+        tids_to_update.append(m.TrackID)
+        if len(tids_to_update) >= 25:
+            await update_maps_from_tmx(tids_to_update)
+            tids_to_update.clear()
+            await asyncio.sleep(1)
+
+
+async def update_maps_from_tmx(tids: list[int]):
+    tids_str = ','.join(map(str, tids))
+    async with get_session() as session:
+        try:
+            async with session.get(f"https://trackmania.exchange/api/maps/get_map_info/multi/{tids_str}", timeout=10.0) as resp:
+                if resp.status == 200:
+                    await _add_maps_from_json(dict(results=await resp.json()), False)
+                else:
+                    logging.warning(f"Could not get map infos: {resp.status} code.")
+                    print(f"RETRY ME: {tids_str}")
+                    return update_maps_from_tmx(tids)
+        except asyncio.TimeoutError as e:
+            logging.warning(f"TMX timeout for get map infos")
+            return update_maps_from_tmx(tids)
 
 
 async def ensure_known_maps_cached():

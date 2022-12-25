@@ -111,6 +111,7 @@ class Map(Document):
     EnvironmentName: str
     HasScreenshot: bool
     HasThumbnail: bool
+    MapType: str | None
 
     def __init__(self, *args, LengthName="2 m 30 s", LengthSecs=None, **kwargs):
         if LengthSecs is None:

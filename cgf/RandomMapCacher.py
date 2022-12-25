@@ -49,7 +49,7 @@ class MapPackNotFound(Exception):
 MAINTAIN_N_MAPS = 200 if not LOCAL_DEV_MODE else 20  #200
 
 def rm_query_args():
-    return [Map.Downloadable == True, Map.Unreleased == False, Map.Unlisted == False]
+    return [Map.Downloadable == True, Map.Unreleased == False, Map.Unlisted == False, Map.MapType == "TM_Race"]
 
 async def init_known_maps():
     _maps = await Map.find_all(projection_model=MapJustID).to_list()

@@ -4,7 +4,7 @@ import logging
 
 from pydantic import Field, BaseModel
 from beanie import Document, Indexed
-
+import pymongo
 
 LONG_MAP_SECS = 315
 
@@ -112,6 +112,16 @@ class Map(Document):
     HasScreenshot: bool
     HasThumbnail: bool
     MapType: str | None
+
+    class Settings:
+        indexes = \
+            [ "MapType"
+            , [ ("Downloadable", pymongo.DESCENDING)
+              , ("Unreleased", pymongo.DESCENDING)
+              , ("Unlisted", pymongo.DESCENDING)
+              , ("MapType", pymongo.DESCENDING)
+              ]
+            ]
 
     def __init__(self, *args, LengthName="2 m 30 s", LengthSecs=None, **kwargs):
         if LengthSecs is None:

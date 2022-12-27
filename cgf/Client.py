@@ -841,13 +841,22 @@ class RoomController(HasChats):
 
     @HasAdmins.mod_only
     def on_update_game_opts(self, client: "Client", msg: Message):
-        if self.has_game_started(self):
+        if self.has_game_started():
             return client.tell_error(f"Game already started: cannot update game options.")
         game_opts = msg.payload.get('game_opts', None)
+        player_limit = int(msg.payload.get('player_limit', self.model.player_limit))
+        for k in game_opts:
+            if not isinstance(game_opts[k], str):
+                game_opts[k] = str(game_opts[k])
+        new_player_limit = max(MIN_PLAYERS, min(MAX_PLAYERS, player_limit))
+        if new_player_limit < len(self.clients):
+            return client.tell_error(f"Update failed: too many players in room.")
         if game_opts:
+            self.model.player_limit = new_player_limit
             self.model.game_opts = game_opts
             self.persist_model()
             client.tell_info(f"Updated game options")
+            self.send_room_info(client)
         else:
             client.tell_warning(f"Could not load game options")
 

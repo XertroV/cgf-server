@@ -795,6 +795,7 @@ class RoomController(HasChats):
         if msg.type == "JOIN_TEAM": await self.on_join_team(client, msg)
         elif msg.type == "LIST_TEAMS": self.on_list_teams(client)
         elif msg.type == "LIST_PLAYERS": self.tell_player_list(client)
+        elif msg.type == "UPDATE_GAME_OPTS": self.on_update_game_opts(client, msg)
         elif msg.type == "MARK_READY": await self.on_mark_ready(client, msg)
         elif msg.type == "LEAVE": return "LEAVE"
         elif msg.type == "FORCE_START": self.on_force_start(client, msg)
@@ -837,6 +838,18 @@ class RoomController(HasChats):
         for team in self.teams:
             while client in team:
                 team.remove(client)
+
+    @HasAdmins.mod_only
+    def on_update_game_opts(self, client: "Client", msg: Message):
+        if self.has_game_started(self):
+            return client.tell_error(f"Game already started: cannot update game options.")
+        game_opts = msg.payload.get('game_opts', None)
+        if game_opts:
+            self.model.game_opts = game_opts
+            self.persist_model()
+            client.tell_info(f"Updated game options")
+        else:
+            client.tell_warning(f"Could not load game options")
 
     def has_game_started(self):
         return 0 < self.model.game_start_time < time.time()

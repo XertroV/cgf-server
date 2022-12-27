@@ -19,7 +19,7 @@
 |y| `0|MainLobby` | JOIN_LOBBY | `{name: string}` | global | join a game lobby |
 |y| `0|MainLobby` | LIST_LOBBIES | `` | none | request a list of known lobbies |
 |y| `0`,`1` | LEAVE | `` | global | leave a game lobby, will end the connection if the user is in the main lobby |
-|y| `1|<LobbyName>` | CREATE_ROOM | `{name: string, player_limit: int, n_teams: int, maps_required: int, min_secs: int, max_secs: int}` | none, global | | visibility corresponds to private/public room. public rooms are listed and can be joined by anyone. |
+|y| `1|<LobbyName>` | CREATE_ROOM | `{name: string, player_limit: int, n_teams: int, maps_required: int, min_secs: int, max_secs: int, max_difficulty: int, map_pack?: int, game_opts: dict, use_club_room: bool}` | none, global | | visibility corresponds to private/public room. public rooms are listed and can be joined by anyone. |
 |y| `1|<LobbyName>` | JOIN_ROOM | `{name: string}` | global ||
 |y| `1|<LobbyName>` | JOIN_CODE | `{code: string}` | global ||
 
@@ -63,8 +63,7 @@ These are added by the server.
 |t| `2|<RoomName>` | RM_MOD | `{uid: string}` | global | admin only |
 |t| `2|<RoomName>` | KICK_PLAYER | `{uid: string}` | global | admin/mod only |
 |y| `2|<RoomName>` | FORCE_START | `{}` | global | admin/mod only |
-
-
+|y| `2|<RoomName>` | UPDATE_GAME_OPTS | `{game_opts: dict}` | global | admin/mod only |
 
 
 PLAYER_JOINED, etc

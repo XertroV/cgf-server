@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cgf-server"
-version = "0.1.25"
+version = "0.1.45"
 description = "Community Game Framework server for Trackmania Plugins"
 authors = ["Max Kaye <m@xk.io>"]
 license = "Public Domain"

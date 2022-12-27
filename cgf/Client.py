@@ -856,7 +856,8 @@ class RoomController(HasChats):
             self.model.game_opts = game_opts
             self.persist_model()
             client.tell_info(f"Updated game options")
-            self.send_room_info(client)
+            for c in self.clients:
+                self.send_room_info(c)
         else:
             client.tell_warning(f"Could not load game options")
 

@@ -192,7 +192,7 @@ class GameSession(HasAdminsModel):
     lobby: str
     # list of player UIDs
     teams: list[list[str]]
-    team_order: list[int] = Field(default_factory=list)
+    team_order: list[int]
     map_list: list[int]
     creation_ts: Indexed(float, pymongo.DESCENDING) = Field(default_factory=lambda: time.time())
     class Settings:
@@ -212,10 +212,6 @@ class GameSession(HasAdminsModel):
 
     @property
     def to_full_game_info_json(self):
-        if self.team_order is None or len(self.team_order) == 0:
-            self.team_order = list(range(len(self.teams)))
-            random.shuffle(self.team_order)
-            self.persist_model()
         ret = dict(
             players=[p.safe_json for p in self.players],
             n_game_msgs=len(self.game_msgs),
@@ -225,7 +221,6 @@ class GameSession(HasAdminsModel):
             room=self.room,
             lobby=self.lobby,
         )
-        print(ret)
         return ret
 
     @property

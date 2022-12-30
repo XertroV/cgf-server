@@ -287,7 +287,7 @@ async def add_latest_maps():
                 logging.warning(f"Could not get latest maps: {resp.status} code")
 
 
-async def _add_maps_from_json(j: dict, add_to_random_maps = True):
+async def _add_maps_from_json(j: dict, add_to_random_maps = True, log_replacement = True):
     if 'results' not in j:
         logging.warning(f"Response didn't contain .results")
         return
@@ -305,7 +305,8 @@ async def _add_maps_from_json(j: dict, add_to_random_maps = True):
         if map_in_db is not None:
             _map.id = map_in_db.id
             await _map.replace()
-            logging.info(f"Replacing map in db: {_map.TrackID}")
+            if log_replacement:
+                logging.info(f"Replacing map in db: {_map.TrackID}")
         else:
             await _map.save()  # using insert_many later doesn't populate .id
         if add_to_random_maps:
@@ -399,15 +400,15 @@ async def get_maps_from_map_pack(maps_needed: int, id: int):
             if mp.Tracks is None:
                 mp.Tracks = list()
             tracks = await get_map_pack_tracks(id)
-            await _add_maps_from_json(dict(results=tracks), False)
+            await _add_maps_from_json(dict(results=tracks), False, False)
             for track in tracks:
                 tid = track['TrackID']
                 if tid not in mp.Tracks:
                     mp.Tracks.append(tid)
-            logging.info(f"Cached map pack with {len(mp.Tracks)} maps.")
             await mp.save()
             cached_map_packs.add(id)
-            asyncio.create_task(uncache_map_pack_in(id, 60 * 60 * 6))
+            asyncio.create_task(uncache_map_pack_in(id, 60 * 60 * 24))
+            logging.info(f"Cached map pack {mp.ID} ({mp.Name}) with {len(mp.Tracks)} maps.")
     provided = 0
     if mp is not None:
         maps = await Map.find_many(In(Map.TrackID, mp.Tracks)).to_list()
@@ -423,8 +424,8 @@ async def get_maps_from_map_pack(maps_needed: int, id: int):
             yield m
 
 
-# cache for 6 hrs
-async def uncache_map_pack_in(id, delay = 60 * 60 * 6):
+# cache for 24 hrs
+async def uncache_map_pack_in(id, delay = 60 * 60 * 24):
     await asyncio.sleep(delay)
     if id in cached_map_packs:
         cached_map_packs.remove(id)

@@ -117,7 +117,7 @@ class Room(HasAdminsModel):
     n_teams: int
     maps_required: int = Field(default=1)
     map_pack: int | None = None
-    totd_maps: bool = False
+    use_totd: bool = False
     min_secs: int = Field(default=15)
     max_secs: int = Field(default=45)
     max_difficulty: int = Field(default=3)
@@ -176,6 +176,7 @@ class Room(HasAdminsModel):
             max_secs=self.max_secs,
             max_difficulty=int_to_difficulty(self.max_difficulty),
             map_pack=self.map_pack,
+            use_totd=self.use_totd,
             game_start_time=self.game_start_time,
             started=0 < self.game_start_time < time.time(),
             game_opts=self.game_opts,
@@ -526,7 +527,7 @@ class RoomController(HasChats):
                 map_gen = RMC.get_maps_from_map_pack(maps_needed, self.model.map_pack) \
                     if self.model.map_pack is not None \
                     else RMC.get_maps_from_totd_maps(maps_needed) \
-                        if self.model.totd_maps \
+                        if self.model.use_totd \
                         else RMC.get_some_maps(maps_needed, self.model.min_secs, self.model.max_secs, self.model.max_difficulty)
                 # log.debug(f"Room asking for {maps_needed} maps.")
                 async for m in map_gen:
@@ -1690,7 +1691,7 @@ class Lobby(HasChats):
             return client.tell_error(f"max map length less than min map length")
         max_difficulty = clamp(msg.payload.get('max_difficulty', 3), 0, 5)
         map_pack = msg.payload.get('map_pack', None)
-        totd_maps = msg.payload.get('use_totd', False)
+        use_totd = msg.payload.get('use_totd', False)
         game_opts: dict = msg.payload.get('game_opts', dict())
         self.fix_game_opts(game_opts)
         if not isinstance(game_opts, dict): return client.tell_error(f"Invalid format for game_opts.")
@@ -1704,7 +1705,7 @@ class Lobby(HasChats):
             player_limit=player_limit, n_teams=n_teams,
             is_public=is_public,
             admins=[msg.user],
-            maps_required=maps_required, map_pack=map_pack, totd_maps=totd_maps,
+            maps_required=maps_required, map_pack=map_pack, use_totd=use_totd,
             min_secs=min_secs, max_secs=max_secs, max_difficulty=max_difficulty,
             game_opts=game_opts, use_club_room=use_club_room,
         )

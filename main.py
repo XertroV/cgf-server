@@ -121,6 +121,7 @@ async def main():
         await RMC.add_latest_maps()
 
     asyncio.create_task(RMC.maintain_random_maps())
+    asyncio.create_task(RMC.maintain_totd_maps())
 
     for l in all_lobbies.values():
         await l.initialized()

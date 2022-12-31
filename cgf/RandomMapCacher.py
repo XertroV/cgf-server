@@ -7,6 +7,7 @@ import botocore
 
 import aiohttp
 from beanie.operators import In, Eq
+from cgf.NadeoApi import await_nadeo_services_initialized, get_totd_maps
 
 from cgf.consts import LOCAL_DEV_MODE, SERVER_VERSION, SHUTDOWN, SHUTDOWN_EVT
 from cgf.models.MapPack import MapPack
@@ -20,6 +21,7 @@ fresh_random_maps: list[Map] = list()
 maps_to_cache: list[Map] = list()
 known_maps: set[int] = set()
 cached_maps: set[int] = set()
+totd_tids: set[int] = set()
 
 async def load_random_map_queue():
     return await RandomMapQueue.find_one(RandomMapQueue.name == "main")
@@ -82,8 +84,8 @@ async def ensure_maps_have_map_type():
             await asyncio.sleep(1)
 
 
-async def update_maps_from_tmx(tids: list[int]):
-    tids_str = ','.join(map(str, tids))
+async def update_maps_from_tmx(tids_or_uids: list[int | str]):
+    tids_str = ','.join(map(str, tids_or_uids))
     async with get_session() as session:
         try:
             async with session.get(f"https://trackmania.exchange/api/maps/get_map_info/multi/{tids_str}", timeout=10.0) as resp:
@@ -92,10 +94,10 @@ async def update_maps_from_tmx(tids: list[int]):
                 else:
                     logging.warning(f"Could not get map infos: {resp.status} code.")
                     print(f"RETRY ME: {tids_str}")
-                    return update_maps_from_tmx(tids)
+                    return update_maps_from_tmx(tids_or_uids)
         except asyncio.TimeoutError as e:
             logging.warning(f"TMX timeout for get map infos")
-            return update_maps_from_tmx(tids)
+            return update_maps_from_tmx(tids_or_uids)
 
 
 async def ensure_known_maps_cached():
@@ -445,4 +447,53 @@ async def uncache_map_pack_in(id, delay = 60 * 60 * 24):
         cached_map_packs.remove(id)
 
 
-# async def maintain_totd_maps():
+async def maintain_totd_maps():
+    existing_totds = await Map.find(Map.WasTOTD == True).to_list()
+    totd_tids.update(m.TrackID for m in existing_totds)
+    while not SHUTDOWN:
+        try:
+            resp = await get_totd_maps()
+            if resp is None:
+                await asyncio.sleep(5)
+                continue
+            await update_totds(resp)
+            wait_time = resp['relativeNextRequest']
+            await asyncio.sleep(wait_time)
+        except Exception as e:
+            logging.warn(f"Exception maintaining totd maps: {e}")
+            await asyncio.sleep(5)
+
+totds_not_on_tmx: set[str] = set()
+
+async def update_totds(resp: dict):
+    map_uids = set()
+    for month in resp.get('monthList', []):
+        for day in month.get('days', []):
+            map_uid = day.get('mapUid', None)
+            if map_uid is not None and len(map_uid) > 15 and map_uid not in totds_not_on_tmx:
+                map_uids.add(map_uid)
+    map_uids_list = list(map_uids)
+
+    logging.info(f"Updating TOTDs: {len(map_uids)} total")
+    existing_maps = await Map.find(In(Map.TrackUID, map_uids_list)).to_list()
+    existing_uids = set(m.TrackUID for m in existing_maps)
+    to_get_uids = list(map_uids - existing_uids)
+    totd_tids.update(m.TrackID for m in existing_maps)
+
+
+    logging.info(f"Getting TOTDs from TMX: {len(to_get_uids)}")
+    for i, uids in enumerate(chunk(to_get_uids, 5)):
+        await update_maps_from_tmx(uids)
+        logging.info(f"Updated TOTDs: [{i+1} / {len(to_get_uids) // 5 + 1}] {uids}")
+    all_totd_maps = await Map.find(In(Map.TrackUID, map_uids_list)).to_list()
+    totd_tids.update(m.TrackID for m in all_totd_maps)
+    totds_not_on_tmx.update(map_uids - set(m.TrackUID for m in all_totd_maps))
+
+    logging.info(f"All TOTDs updated: {len(totd_tids)} total")
+
+    for m in all_totd_maps:
+        if not m.WasTOTD:
+            m.WasTOTD = True
+            await m.save()
+
+    logging.info(f"Ensured TOTD flag set")

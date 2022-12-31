@@ -112,6 +112,7 @@ class Map(Document):
     HasScreenshot: bool
     HasThumbnail: bool
     MapType: str | None
+    WasTOTD: bool = False
 
     class Settings:
         indexes = \
@@ -121,6 +122,7 @@ class Map(Document):
               , ("Unlisted", pymongo.DESCENDING)
               , ("MapType", pymongo.DESCENDING)
               ]
+            , "WasTOTD"
             ]
 
     def __init__(self, *args, LengthName="2 m 30 s", LengthSecs=None, **kwargs):

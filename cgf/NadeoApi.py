@@ -5,7 +5,7 @@ import time
 from aiohttp import BasicAuth
 
 import jwt
-from cgf.consts import LOCAL_DEV_MODE
+from cgf.consts import LOCAL_DEV_MODE, SHUTDOWN
 from cgf.users import gen_uid
 
 from cgf.utils import read_config_file
@@ -146,6 +146,19 @@ def get_core_session():
 
 def get_live_session():
     return get_nadeo_session('NadeoLiveServices')
+
+
+TOTD_MAP_LIST = "https://live-services.trackmania.nadeo.live/api/token/campaign/month?length=100&offset=0"
+
+async def get_totd_maps():
+    await await_nadeo_services_initialized()
+    async with get_live_session() as session:
+        async with await session.get(TOTD_MAP_LIST) as resp:
+            if resp.status == 200:
+                return await resp.json()
+            logging.warn(f"get totd maps got status: {resp.status}, {await resp.text()}")
+            return None
+
 
 
 MAP_INFO_BY_UID_URL = "https://prod.trackmania.core.nadeo.online/maps/?mapUidList="

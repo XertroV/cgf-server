@@ -245,11 +245,25 @@ async def add_more_random_maps(n: int):
     except Exception as e:
         logging.warn(f"Exception getting random maps (passing over): {e}")
 
-async def _add_a_random_map(delay = 0):
+RANDOM_MAP_TMX_PARAMS = {
+    # exclude tags; https://trackmania.exchange/api/tags/gettags; kacky,royal,arena,flagrush,puzzle
+    'etags': '23,37,40,46,47',
+}
+
+def mk_url_params(params: dict[str, str], prefix_ampersand=False):
+    '''will only prefix ampersand if params is not empty'''
+    return ('&' if prefix_ampersand and len(params) > 0 else '') + '&'.join([f"{k}={v}" for k,v in params.items()])
+
+async def _add_a_random_map(delay = 0, extra_params=None):
+    params = dict(**RANDOM_MAP_TMX_PARAMS)
+    if extra_params is not None:
+        params.update(extra_params)
+    params_str = mk_url_params(params, True)
+
     if delay > 0: await asyncio.sleep(delay)
     async with get_session() as session:
         try:
-            async with session.get(f"https://trackmania.exchange/mapsearch2/search?api=on&random=1", timeout=10.0) as resp:
+            async with session.get(f"https://trackmania.exchange/mapsearch2/search?api=on&random=1{params_str}", timeout=10.0) as resp:
                 if resp.status == 200:
                     await _add_maps_from_json(await resp.json())
                 else:
@@ -429,3 +443,6 @@ async def uncache_map_pack_in(id, delay = 60 * 60 * 24):
     await asyncio.sleep(delay)
     if id in cached_map_packs:
         cached_map_packs.remove(id)
+
+
+# async def maintain_totd_maps():

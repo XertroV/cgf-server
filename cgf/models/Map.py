@@ -79,7 +79,7 @@ class Map(Document):
     AuthorLogin: Indexed(str)
     Name: Indexed(str)
     GbxMapName: Indexed(str)
-    TrackUID: str
+    TrackUID: Indexed(str)
     TitlePack: Indexed(str)
     ExeVersion: Indexed(str)
     ExeBuild: Indexed(str)

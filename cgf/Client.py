@@ -117,6 +117,7 @@ class Room(HasAdminsModel):
     n_teams: int
     maps_required: int = Field(default=1)
     map_pack: int | None = None
+    totd_maps: bool = False
     min_secs: int = Field(default=15)
     max_secs: int = Field(default=45)
     max_difficulty: int = Field(default=3)
@@ -524,7 +525,9 @@ class RoomController(HasChats):
             try:
                 map_gen = RMC.get_maps_from_map_pack(maps_needed, self.model.map_pack) \
                     if self.model.map_pack is not None \
-                    else RMC.get_some_maps(maps_needed, self.model.min_secs, self.model.max_secs, self.model.max_difficulty)
+                    else RMC.get_maps_from_totd_maps(maps_needed) \
+                        if self.model.totd_maps \
+                        else RMC.get_some_maps(maps_needed, self.model.min_secs, self.model.max_secs, self.model.max_difficulty)
                 # log.debug(f"Room asking for {maps_needed} maps.")
                 async for m in map_gen:
                     # log.debug(f"Got map: {m.json()}")
@@ -1301,8 +1304,9 @@ class Client:
         try:
             self.send_server_info()
             self.lobby = await get_main_lobby()
+            rejoin_intent: str | None = None
             while not self.disconnected and self.user is None:
-                await self.init_client()
+                rejoin_intent = await self.init_client(rejoin_intent)
         except Exception as e:
             self.tell_error(f"Exception: {e}")
             logging.warn(f"[Client:{self.client_ip}] Got exception: {e}, \n{''.join(traceback.format_exception(e))}")
@@ -1334,14 +1338,20 @@ class Client:
                         room_name = _g.room
                 else:
                     log.warning(f"Unknown scope type: {scope_type} from last_scope: {self.user.last_scope}")
+            # only rejoin if we want to rejoin to that same game
+            if rejoin_intent is not None and rejoin_intent != lobby_name:
+                lobby_name = None
             await self.lobby.handoff(self, lobby_name, room_name, game_name)
         self.disconnect()
 
-    async def init_client(self):
+    async def init_client(self, rejoin_intent: str | None = None):
         # register_or_login
         msg = await self.read_valid()
         if msg is None:
             return
+        if msg.type == "REJOIN_INTENT":
+            rejoin_intent = msg.payload.get('lobby', None)
+            msg = await self.read_valid()
         user = None
         checked_for_user = False
         if msg.type == "LOGIN_TOKEN":
@@ -1377,6 +1387,7 @@ class Client:
             else:
                 self.tell_error("Login failed")
         self.user = user
+        return rejoin_intent
 
     def tell_error(self, msg: str):
         logging.warn(f"[Client:{self.client_ip}] Sending error to client: {msg}")
@@ -1679,6 +1690,7 @@ class Lobby(HasChats):
             return client.tell_error(f"max map length less than min map length")
         max_difficulty = clamp(msg.payload.get('max_difficulty', 3), 0, 5)
         map_pack = msg.payload.get('map_pack', None)
+        totd_maps = msg.payload.get('use_totd', False)
         game_opts: dict = msg.payload.get('game_opts', dict())
         self.fix_game_opts(game_opts)
         if not isinstance(game_opts, dict): return client.tell_error(f"Invalid format for game_opts.")
@@ -1692,7 +1704,7 @@ class Lobby(HasChats):
             player_limit=player_limit, n_teams=n_teams,
             is_public=is_public,
             admins=[msg.user],
-            maps_required=maps_required, map_pack=map_pack,
+            maps_required=maps_required, map_pack=map_pack, totd_maps=totd_maps,
             min_secs=min_secs, max_secs=max_secs, max_difficulty=max_difficulty,
             game_opts=game_opts, use_club_room=use_club_room,
         )

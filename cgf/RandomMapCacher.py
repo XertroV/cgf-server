@@ -23,6 +23,10 @@ known_maps: set[int] = set()
 cached_maps: set[int] = set()
 totd_tids: set[int] = set()
 
+initialized_totds = False
+
+MAINTAIN_N_MAPS = 200 if not LOCAL_DEV_MODE else 20  #200
+
 async def load_random_map_queue():
     return await RandomMapQueue.find_one(RandomMapQueue.name == "main")
 
@@ -47,8 +51,6 @@ class MapPackNotFound(Exception):
         self.status_code = 0 if status_code is None else status_code
         self.message = 'Unknown' if message is None else message
         super().__init__(*args)
-
-MAINTAIN_N_MAPS = 200 if not LOCAL_DEV_MODE else 20  #200
 
 def rm_query_args():
     return [Map.Downloadable == True, Map.Unreleased == False, Map.Unlisted == False, Map.MapType == "TM_Race"]
@@ -466,6 +468,7 @@ async def maintain_totd_maps():
 totds_not_on_tmx: set[str] = set()
 
 async def update_totds(resp: dict):
+    global initialized_totds
     map_uids = set()
     for month in resp.get('monthList', []):
         for day in month.get('days', []):
@@ -497,3 +500,19 @@ async def update_totds(resp: dict):
             await m.save()
 
     logging.info(f"Ensured TOTD flag set")
+    initialized_totds = True
+
+
+async def await_initialized_totds():
+    while not initialized_totds:
+        await asyncio.sleep(0.05)
+
+
+async def get_maps_from_totd_maps(maps_needed: int):
+    await await_initialized_totds()
+    sent = 0
+    while sent < maps_needed:
+        tids = random.sample(totd_tids, maps_needed)
+        async for m in Map.find(In(Map.TrackID, tids)):
+            yield m
+            sent += 1

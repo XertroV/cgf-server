@@ -13,8 +13,10 @@
 
 | implemented | scope | type | payload | visibility req | notes |
 |---|--- |--- |--- |--- |--- |
+|y| init | REJOIN_INTENT | `{lobby: string}` | none | optional msg that will avoid rejoining the client to a different lobby or a room/game hosted in a different lobby. must be sent before `LOGIN` |
 |y| init | REGISTER | `{username: string, wsid: string}` | none ||
 |y| init | LOGIN | `account` | none ||
+|y| init | LOGIN_TOKEN | `{t: string}` | none | from openplanet `Auth::` functionality. |
 |y| `0|MainLobby` | CREATE_LOBBY | `{name: string}` | global | used by developers to create a game lobby. note: lobbies that are not whitelisted may be deleted after 1hr. |
 |y| `0|MainLobby` | JOIN_LOBBY | `{name: string}` | global | join a game lobby |
 |y| `0|MainLobby` | LIST_LOBBIES | `` | none | request a list of known lobbies |

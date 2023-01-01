@@ -737,6 +737,7 @@ class RoomController(HasChats):
         self.tell_client_map_load_error(client)
         if self.loaded_maps:
             client.write_message("MAPS_LOADED", dict())
+            client.write_message("MAPS_PRELOAD", dict(maps=self.model.map_list))
 
     def assign_to_team(self, client: "Client"):
         _teams = []

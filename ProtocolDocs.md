@@ -81,6 +81,8 @@ PLAYER_JOINED, etc
 
 |y| 2 | PREPARATION_STATUS | `{msg: str, error?: bool}` |
 |y| 2 | MAP_LOAD_ERROR | `{msg: str, status_code: int}` |
+|y| 2 | MAPS_LOADED | `{}` | status msg that the server has selected the maps required |
+|y| 2 | MAPS_PRELOAD | `{maps: int[]}` | trackIds to preload (optional) |
 
 |y| 2 | SERVER_JOIN_LINK | `{join_link: str}` | the join link to connect to when the game starts |
 |y| 2 | ENSURE_MAPS_NADEO | `{map_tids_uids: array<[int, str]>}` | the client should download the maps (based on TrackID) and upload them to nadeo services (based on UID) |

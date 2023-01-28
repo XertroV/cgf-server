@@ -50,6 +50,7 @@ DEFAULT_CLUB_ROOM_SETTINGS = [
     {"key":"S_DelayBeforeNextMap","value":"0","type":"integer"},
     {"key":"S_ChatTime","value":"0","type":"integer"},
     {"key":"S_WarmUpNb","value":"0","type":"integer"},
+    {"key":"S_UseCrudeExtrapolation","value":"true","type":"boolean"},
     # {"key":"S_WarmUpDuration","value":"1","type":"integer"}
     # {"key":"S_WarmUpDuration","value":"10","type":"integer"}
     # {"key":"S_WarmUpDuration","value":"120","type":"integer"}
@@ -1367,7 +1368,7 @@ class Client:
                 # update this in case the user updated their account name
                 user.name = tokenInfo.display_name
                 if user is not None:
-                    await user.set({User.last_seen: time.time(), User.n_logins: user.n_logins + 1})
+                    await user.set({User.last_seen: time.time(), User.n_logins: user.n_logins + 1, User.name: tokenInfo.display_name})
                     self.write_json(dict(type="LOGGED_IN", uid=user.uid, account_id=tokenInfo.account_id, display_name=tokenInfo.display_name))
         if ENABLE_LEGACY_AUTH and msg.type == "LOGIN":
             user = authenticate_user(msg['uid'], msg['username'], msg['secret'])

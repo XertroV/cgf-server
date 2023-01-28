@@ -51,6 +51,7 @@ DEFAULT_CLUB_ROOM_SETTINGS = [
     {"key":"S_ChatTime","value":"0","type":"integer"},
     {"key":"S_WarmUpNb","value":"0","type":"integer"},
     {"key":"S_UseCrudeExtrapolation","value":"true","type":"boolean"},
+    {"key":"S_SynchronizePlayersAtMapStart","value":"true","type":"boolean"},
     # {"key":"S_WarmUpDuration","value":"1","type":"integer"}
     # {"key":"S_WarmUpDuration","value":"10","type":"integer"}
     # {"key":"S_WarmUpDuration","value":"120","type":"integer"}

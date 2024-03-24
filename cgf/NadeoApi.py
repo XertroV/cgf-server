@@ -80,6 +80,9 @@ async def get_token_for_audience(ubi: UbiAuthResp, audience: str):
             headers={'Content-Type': 'application/json', 'Authorization': f'ubi_v1 t={ubi.ticket}'},
             json=body
         ) as resp:
+            if resp.status >= 500:
+                logging.warn(f"Got 500 status trying to get token for audience {audience}")
+                return
             if not resp.ok:
                 logging.warn(f"Error getting token for audience {audience}; {resp.status}, {await resp.content.read()}")
                 return
@@ -90,9 +93,16 @@ NadeoCoreToken: NadeoToken | None = None
 NadeoLiveToken: NadeoToken | None = None
 
 
-async def await_nadeo_services_initialized():
+async def await_nadeo_services_initialized(raise_on_timeout=False):
+    count = 0.0
     while NadeoCoreToken is None or NadeoLiveToken is None:
         await asyncio.sleep(.05)
+        count += 0.05
+        if count > 20.0:
+            logging.warn(f"nadeo services not initialized after 20 seconds!")
+            if raise_on_timeout:
+                raise Exception("nadeo services not initialized after 20 seconds!")
+            return
 
 
 def all_tokens() -> list[NadeoToken | None]:
@@ -105,16 +115,19 @@ async def reacquire_all_tokens():
     ubi = await start_session()
     logging.info(f"Ubi session started: {ubi is not None}")
 
-    NadeoCoreToken = await get_token_for_audience(ubi, 'NadeoServices')
-    logging.warn(f"Got core token: {NadeoCoreToken is not None}")
-    if LOCAL_DEV_MODE:
-        logging.warn(f"Got core token: {NadeoCoreToken.accessToken}")
+    new_core_token = await get_token_for_audience(ubi, 'NadeoServices')
+    logging.info(f"Got new core token: {new_core_token is not None}")
+    if new_core_token is not None:
+        NadeoCoreToken = new_core_token
+        if LOCAL_DEV_MODE:
+            logging.warn(f"Got core token: {NadeoCoreToken.accessToken}")
 
-    NadeoLiveToken = await get_token_for_audience(ubi, 'NadeoLiveServices')
-    logging.warn(f"Got live token: {NadeoLiveToken is not None}")
-    if LOCAL_DEV_MODE:
-        logging.warn(f"Got live token: {NadeoLiveToken.accessToken}")
-
+    new_live_token = await get_token_for_audience(ubi, 'NadeoLiveServices')
+    logging.info(f"Got new live token: {new_live_token is not None}")
+    if new_live_token is not None:
+        NadeoLiveToken = new_live_token
+        if LOCAL_DEV_MODE:
+            logging.warn(f"Got live token: {NadeoLiveToken.accessToken}")
 
 async def run_nadeo_services_auth():
     await reacquire_all_tokens()
@@ -122,7 +135,9 @@ async def run_nadeo_services_auth():
         await asyncio.sleep(60)
         ts = all_tokens()
         for t in ts:
-            if t is None: continue
+            if t is None:
+                await reacquire_all_tokens()
+                break
             refreshAfter = t.accessTokenJson.get('rat')
             if time.time() > refreshAfter + 10:
                 await reacquire_all_tokens()
